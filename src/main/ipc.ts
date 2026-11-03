@@ -1,14 +1,25 @@
 import { dialog, ipcMain } from 'electron'
-import { readFile, writeFile } from 'node:fs/promises'
-import { basename, dirname } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { basename } from 'node:path'
 import {
   IpcChannel,
+  isSaveProjectRequest,
   isScadAssetList,
   type FileResult,
   type OpenProjectResult,
   type SvgFile
 } from '../shared/api'
-import { renderStl, detectOpenscad, writeAssets } from './openscad'
+import { projectLocationFromPick, projectStem } from '../shared/project'
+import { detectOpenscad, renderStl } from './openscad'
+import {
+  createProjectFiles,
+  projectExists,
+  readProjectTree,
+  updateProjectFiles,
+  writeProjectScad,
+  writeProjectStl
+} from './projectFiles'
+import { readRecentProjects, rememberProject } from './recents'
 
 export function registerIpc(): void {
   ipcMain.handle(IpcChannel.openscadDetect, () => detectOpenscad())
@@ -19,12 +30,33 @@ export function registerIpc(): void {
     return renderStl(source, assets)
   })
 
-  ipcMain.handle(IpcChannel.saveProject, async (_event, filePath: unknown, contents: unknown) => {
-    if (typeof contents !== 'string') return { filePath: null, message: 'Conteúdo inválido.' }
-    return writeWithDialog(typeof filePath === 'string' ? filePath : null, contents, {
-      defaultPath: 'model.3dev.json',
-      filters: [{ name: 'Projeto 3dev', extensions: ['json'] }]
-    })
+  ipcMain.handle(IpcChannel.saveProject, async (_event, request: unknown): Promise<FileResult> => {
+    if (!isSaveProjectRequest(request)) return failed('Conteúdo inválido.')
+    try {
+      if (request.filePath && (await projectExists(request.filePath))) {
+        await updateProjectFiles(request.filePath, request.contents, request.source, request.assets)
+        await rememberProject(request.filePath)
+        return { filePath: request.filePath, message: '', isProject: true }
+      }
+      const picked = await dialog.showSaveDialog({
+        title: 'Salvar projeto',
+        buttonLabel: 'Salvar',
+        defaultPath: `${projectStem(request.documentName)}.3dev`
+      })
+      if (picked.canceled || !picked.filePath) return failed('')
+      const location = projectLocationFromPick(picked.filePath)
+      const jsonPath = await createProjectFiles(
+        location.directory,
+        location.stem,
+        request.contents,
+        request.source,
+        request.assets
+      )
+      await rememberProject(jsonPath)
+      return { filePath: jsonPath, message: '', isProject: true }
+    } catch (error) {
+      return failed(error instanceof Error ? error.message : 'Não foi possível gravar o projeto.')
+    }
   })
 
   ipcMain.handle(IpcChannel.openProject, async (): Promise<OpenProjectResult | null> => {
@@ -34,36 +66,56 @@ export function registerIpc(): void {
     })
     const filePath = result.filePaths[0]
     if (result.canceled || !filePath) return null
-    const contents = await readFile(filePath, 'utf8')
-    return { filePath, contents }
+    return readOpenedProject(filePath)
   })
 
-  ipcMain.handle(IpcChannel.exportScad, async (_event, source: unknown, assets: unknown) => {
-    if (typeof source !== 'string') return { filePath: null, message: 'Fonte inválida.' }
-    if (!isScadAssetList(assets)) return { filePath: null, message: 'Arquivos SVG inválidos.' }
-    const saved = await writeWithDialog(null, source, {
-      defaultPath: 'model.scad',
-      filters: [{ name: 'OpenSCAD', extensions: ['scad'] }]
-    })
-    if (!saved.filePath) return saved
-    await writeAssets(dirname(saved.filePath), assets)
-    return saved
+  ipcMain.handle(IpcChannel.openRecentProject, async (_event, jsonPath: unknown) => {
+    if (typeof jsonPath !== 'string' || !jsonPath.endsWith('.json')) return null
+    const listed = await readRecentProjects()
+    if (!listed.some((project) => project.jsonPath === jsonPath)) return null
+    return readOpenedProject(jsonPath)
+  })
+
+  ipcMain.handle(IpcChannel.listRecentProjects, () => readRecentProjects())
+
+  ipcMain.handle(IpcChannel.listProjectTree, (_event, jsonPath: unknown) => {
+    if (typeof jsonPath !== 'string' || !jsonPath.endsWith('.json')) return null
+    return readProjectTree(jsonPath)
   })
 
   ipcMain.handle(
+    IpcChannel.exportScad,
+    async (_event, jsonPath: unknown, source: unknown, assets: unknown): Promise<FileResult> => {
+      if (typeof jsonPath !== 'string' || typeof source !== 'string')
+        return failed('Fonte inválida.')
+      if (!isScadAssetList(assets)) return failed('Arquivos SVG inválidos.')
+      if (!(await projectExists(jsonPath))) return failed('Salve o projeto antes de exportar.')
+      try {
+        const filePath = await writeProjectScad(jsonPath, source, assets)
+        return { filePath, message: '', isProject: true }
+      } catch (error) {
+        return failed(
+          error instanceof Error ? error.message : 'Não foi possível exportar o OpenSCAD.'
+        )
+      }
+    }
+  )
+
+  ipcMain.handle(
     IpcChannel.exportStl,
-    async (_event, source: unknown, assets: unknown): Promise<FileResult> => {
-      if (typeof source !== 'string') return { filePath: null, message: 'Fonte inválida.' }
-      if (!isScadAssetList(assets)) return { filePath: null, message: 'Arquivos SVG inválidos.' }
-      const result = await dialog.showSaveDialog({
-        defaultPath: 'model.stl',
-        filters: [{ name: 'STL', extensions: ['stl'] }]
-      })
-      if (result.canceled || !result.filePath) return { filePath: null, message: '' }
+    async (_event, jsonPath: unknown, source: unknown, assets: unknown): Promise<FileResult> => {
+      if (typeof jsonPath !== 'string' || typeof source !== 'string')
+        return failed('Fonte inválida.')
+      if (!isScadAssetList(assets)) return failed('Arquivos SVG inválidos.')
+      if (!(await projectExists(jsonPath))) return failed('Salve o projeto antes de exportar.')
       const rendered = await renderStl(source, assets)
-      if (!rendered.ok || !rendered.stl) return { filePath: null, message: rendered.message }
-      await writeFile(result.filePath, rendered.stl)
-      return { filePath: result.filePath, message: '' }
+      if (!rendered.ok || !rendered.stl) return failed(rendered.message)
+      try {
+        const filePath = await writeProjectStl(jsonPath, rendered.stl)
+        return { filePath, message: '', isProject: true }
+      } catch (error) {
+        return failed(error instanceof Error ? error.message : 'Não foi possível exportar o STL.')
+      }
     }
   )
 
@@ -80,17 +132,17 @@ export function registerIpc(): void {
   })
 }
 
-async function writeWithDialog(
-  filePath: string | null,
-  contents: string,
-  options: Electron.SaveDialogOptions
-): Promise<FileResult> {
-  let target = filePath
-  if (!target) {
-    const result = await dialog.showSaveDialog(options)
-    if (result.canceled || !result.filePath) return { filePath: null, message: '' }
-    target = result.filePath
+async function readOpenedProject(filePath: string): Promise<OpenProjectResult | null> {
+  try {
+    const contents = await readFile(filePath, 'utf8')
+    const isProject = await projectExists(filePath)
+    await rememberProject(filePath)
+    return { filePath, contents, isProject }
+  } catch {
+    return null
   }
-  await writeFile(target, contents, 'utf8')
-  return { filePath: target, message: '' }
+}
+
+function failed(message: string): FileResult {
+  return { filePath: null, message, isProject: false }
 }

@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { constants, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { app } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import type { OpenscadStatus, PreviewStlResult, ScadAsset } from '../shared/api'
+import { writeAssets } from './projectFiles'
 
 const execFileAsync = promisify(execFile)
 const previewCache = new Map<string, Uint8Array>()
@@ -101,15 +102,6 @@ export async function renderStl(
     return { ok: false, message: errorText(error) }
   } finally {
     await rm(directory, { recursive: true, force: true })
-  }
-}
-
-export async function writeAssets(directory: string, assets: ScadAsset[]): Promise<void> {
-  if (assets.length === 0) return
-  const assetDirectory = join(directory, '3dev-assets')
-  await mkdir(assetDirectory, { recursive: true })
-  for (const asset of assets) {
-    await writeFile(join(assetDirectory, `${asset.id}.svg`), asset.source, 'utf8')
   }
 }
 

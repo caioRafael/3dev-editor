@@ -6,7 +6,7 @@ export function Outliner(): React.JSX.Element {
   const document = useEditor((state) => state.document)
   const roots = getRoots(document)
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-r border-[#2c3240] bg-[#1b1e27]">
+    <section className="flex min-h-0 flex-1 flex-col">
       <header className="border-b border-[#2c3240] px-3 py-2 text-[12px] tracking-wide text-[#9aa3b2] uppercase">
         Modelo
       </header>
@@ -19,7 +19,7 @@ export function Outliner(): React.JSX.Element {
           roots.map((node) => <OutlinerNode key={node.id} id={node.id} depth={0} />)
         )}
       </div>
-    </aside>
+    </section>
   )
 }
 

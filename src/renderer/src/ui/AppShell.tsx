@@ -1,20 +1,30 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { generateOpenscad } from '../codegen/openscad'
 import { useEditor } from '../document/store'
 import { CodePanel } from './CodePanel'
+import { FileTree } from './FileTree'
 import { Inspector } from './Inspector'
 import { MenuBar } from './MenuBar'
 import { Outliner } from './Outliner'
 import { StatusBar } from './StatusBar'
 import { Toolbar } from './Toolbar'
+import { WelcomeModal } from './WelcomeModal'
 import { Viewport } from '../viewport/Viewport'
 
 export function AppShell(): React.JSX.Element {
   const document = useEditor((state) => state.document)
   const source = useMemo(() => generateOpenscad(document), [document])
+  const [welcomeOpen, setWelcomeOpen] = useState(true)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (welcomeOpen) {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          setWelcomeOpen(false)
+        }
+        return
+      }
       const target = event.target
       if (
         target instanceof HTMLElement &&
@@ -34,13 +44,16 @@ export function AppShell(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [welcomeOpen])
 
   return (
     <div className="flex h-full w-full flex-col bg-[#14161b] text-[#e7e9ee]">
-      <MenuBar source={source} />
+      <MenuBar source={source} onNew={() => setWelcomeOpen(true)} />
       <div className="flex min-h-0 flex-1">
-        <Outliner />
+        <aside className="flex w-64 shrink-0 flex-col border-r border-[#2c3240] bg-[#1b1e27]">
+          <Outliner />
+          <FileTree />
+        </aside>
         <Toolbar />
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="relative min-h-0 flex-1">
@@ -51,6 +64,7 @@ export function AppShell(): React.JSX.Element {
         <Inspector />
       </div>
       <StatusBar />
+      <WelcomeModal open={welcomeOpen} onClose={() => setWelcomeOpen(false)} />
     </div>
   )
 }

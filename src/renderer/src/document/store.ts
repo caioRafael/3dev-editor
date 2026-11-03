@@ -30,6 +30,8 @@ interface EditorState {
   previewMode: PreviewMode
   previewNonce: number
   filePath: string | null
+  isProject: boolean
+  filesNonce: number
   status: string
   previewPending: number
   previewLabel: string | null
@@ -40,13 +42,14 @@ interface EditorState {
   setStatus: (status: string) => void
   beginPreview: (label: string) => void
   endPreview: () => void
-  setFilePath: (filePath: string | null) => void
+  setProject: (filePath: string | null, isProject: boolean) => void
+  touchFiles: () => void
   setPreviewMode: (previewMode: PreviewMode) => void
   requestExactPreview: () => void
   select: (id: string | null, options?: { additive?: boolean }) => void
   toggleVisible: (id: string) => void
   newDocument: () => void
-  loadDocument: (document: ProjectDocument, filePath: string | null) => void
+  loadDocument: (document: ProjectDocument, filePath: string | null, isProject: boolean) => void
   undo: () => void
   redo: () => void
   addPrimitive: (kind: PrimitiveKind) => void
@@ -69,6 +72,8 @@ export const useEditor = create<EditorState>((set) => ({
   previewMode: 'fast',
   previewNonce: 0,
   filePath: null,
+  isProject: false,
+  filesNonce: 0,
   status: 'Pronto',
   previewPending: 0,
   previewLabel: null,
@@ -85,7 +90,9 @@ export const useEditor = create<EditorState>((set) => ({
       const previewPending = Math.max(0, state.previewPending - 1)
       return { previewPending, previewLabel: previewPending === 0 ? null : state.previewLabel }
     }),
-  setFilePath: (filePath) => set({ filePath }),
+  setProject: (filePath, isProject) =>
+    set((state) => ({ filePath, isProject, filesNonce: state.filesNonce + 1 })),
+  touchFiles: () => set((state) => ({ filesNonce: state.filesNonce + 1 })),
   setPreviewMode: (previewMode) => set({ previewMode }),
   requestExactPreview: () =>
     set((state) => ({ previewMode: 'openscad', previewNonce: state.previewNonce + 1 })),
@@ -112,23 +119,27 @@ export const useEditor = create<EditorState>((set) => ({
     }),
 
   newDocument: () =>
-    set({
+    set((state) => ({
       document: createEmptyDocument(),
       selection: [],
       past: [],
       future: [],
       filePath: null,
+      isProject: false,
+      filesNonce: state.filesNonce + 1,
       previewMode: 'fast',
       status: 'Novo modelo',
       historyPending: false,
       previewPending: 0,
       previewLabel: null
-    }),
+    })),
 
-  loadDocument: (document, filePath) =>
-    set({
+  loadDocument: (document, filePath, isProject) =>
+    set((state) => ({
       document,
       filePath,
+      isProject,
+      filesNonce: state.filesNonce + 1,
       selection: [],
       past: [],
       future: [],
@@ -136,7 +147,7 @@ export const useEditor = create<EditorState>((set) => ({
       previewPending: 0,
       previewLabel: null,
       status: 'Modelo aberto'
-    }),
+    })),
 
   undo: () =>
     set((state) => {

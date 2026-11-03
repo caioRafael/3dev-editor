@@ -8,5 +8,11 @@ export function readEditorApi(): EditorApi | null {
 
 function isEditorApi(value: unknown): value is EditorApi {
   if (typeof value !== 'object' || value === null) return false
-  return 'previewStl' in value && 'saveProject' in value && 'openscadDetect' in value
+  return (
+    'previewStl' in value &&
+    'saveProject' in value &&
+    'openscadDetect' in value &&
+    'listProjectTree' in value &&
+    'listRecentProjects' in value
+  )
 }
