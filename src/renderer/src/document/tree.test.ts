@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { createBoolean, createEmptyDocument, createPrimitive, deleteNodes, patchNode } from './tree'
+import { parseProjectDocument } from './parse'
+import {
+  createBoolean,
+  createEmptyDocument,
+  createPrimitive,
+  createProfile,
+  createSvgProfile,
+  bakeScale,
+  deleteNodes,
+  patchNode
+} from './tree'
 import { useEditor } from './store'
 
 describe('document tree', () => {
@@ -50,6 +60,50 @@ describe('document tree', () => {
     expect(node?.kind).toBe('union')
     if (node?.kind !== 'union') return
     expect(node.rounding).toBe(9.999)
+  })
+
+  it('opens a version 1 project that has no asset library', () => {
+    const created = createPrimitive(createEmptyDocument(), 'cuboid')
+    const legacy = {
+      version: 1,
+      name: 'legacy',
+      units: 'mm',
+      fn: 48,
+      nodes: created.document.nodes
+    }
+    const parsed = parseProjectDocument(legacy)
+    expect(parsed?.assets).toEqual({})
+    expect(parsed?.nodes[created.id]?.kind).toBe('cuboid')
+  })
+
+  it('drops an svg asset when its profile is deleted', () => {
+    const created = createSvgProfile(
+      createEmptyDocument(),
+      'mark.svg',
+      '<svg viewBox="0 0 10 10"></svg>'
+    )
+    expect(created.id).not.toBeNull()
+    const next = deleteNodes(created.document, [created.id ?? ''])
+    expect(next.nodes[created.id ?? '']).toBeUndefined()
+    expect(next.assets).toEqual({})
+  })
+
+  it('uses a renamed text profile as the extruded string', () => {
+    const created = createProfile(createEmptyDocument(), 'text')
+    const next = patchNode(created.document, created.id, { name: 'Casa' })
+    const profile = next.nodes[created.id]
+    if (profile?.kind !== 'text') throw new Error('expected text')
+    expect(profile.name).toBe('Casa')
+    expect(profile.text).toBe('Casa')
+  })
+
+  it('bakes a rectangle scale into its profile size and height', () => {
+    const created = createProfile(createEmptyDocument(), 'rect')
+    const next = bakeScale(created.document, created.id, { x: 2, y: 1, z: 3 })
+    const profile = next.nodes[created.id]
+    if (profile?.kind !== 'rect') throw new Error('expected rect')
+    expect(profile.size).toEqual({ x: 40, y: 12 })
+    expect(profile.extrusion.height).toBe(12)
   })
 
   it('unwraps a boolean that no longer has two children', () => {

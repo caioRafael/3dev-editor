@@ -1,19 +1,38 @@
 import { localBounds, roundingCubeSize } from '../document/math'
 import { getRoots } from '../document/tree'
+import { openscadSvgScale } from '../preview/svgMetrics'
 import {
   type Appearance,
   type BooleanNode,
+  type CircleNode,
   type CuboidNode,
   type CylinderNode,
+  type EllipseNode,
+  type Extrusion,
   type FeatureNode,
+  type NgonNode,
+  type ProfileNode,
   type ProjectDocument,
+  type RectNode,
   type SphereNode,
+  type StarNode,
+  type SvgNode,
+  type TextNode,
+  type Vec2,
   type Vec3,
   DEFAULT_COLOR,
   isBooleanNode,
+  isCircleNode,
   isCuboidNode,
   isCylinderNode,
-  isSphereNode
+  isEllipseNode,
+  isNgonNode,
+  isProfileNode,
+  isRectNode,
+  isSphereNode,
+  isStarNode,
+  isSvgNode,
+  isTextNode
 } from '../document/types'
 
 const HEADER = [
@@ -51,8 +70,80 @@ function emitShape(document: ProjectDocument, node: FeatureNode): string {
   if (isCuboidNode(node)) return `${emitCuboid(node)};`
   if (isCylinderNode(node)) return `${emitCylinder(node)};`
   if (isSphereNode(node)) return `${emitSphere(node)};`
+  if (isProfileNode(node)) return emitExtruded(node)
   if (isBooleanNode(node)) return emitBoolean(document, node)
   return ''
+}
+
+export function emitProfile2d(node: ProfileNode): string {
+  if (isRectNode(node)) return `${emitRect(node)};`
+  if (isCircleNode(node)) return `${emitCircle(node)};`
+  if (isEllipseNode(node)) return `${emitEllipse(node)};`
+  if (isNgonNode(node)) return `${emitNgon(node)};`
+  if (isStarNode(node)) return `${emitStar(node)};`
+  if (isTextNode(node)) return `${emitText(node)};`
+  if (isSvgNode(node)) return emitSvg(node)
+  return ''
+}
+
+function emitExtruded(node: ProfileNode): string {
+  const profile = emitProfile2d(node)
+  if (!profile) return ''
+  return `linear_extrude(${emitExtrusion(node.extrusion)}) {\n${indent(profile, 4)}\n}`
+}
+
+function emitExtrusion(extrusion: Extrusion): string {
+  return [
+    `height=${formatNumber(extrusion.height)}`,
+    'center=true',
+    `twist=${formatNumber(extrusion.twist)}`,
+    `scale=${formatNumber(extrusion.scale)}`
+  ].join(', ')
+}
+
+function emitRect(node: RectNode): string {
+  const args = [`size=${emitVec2(node.size)}`]
+  if (node.rounding > 0) args.push(`rounding=${formatNumber(node.rounding)}`)
+  else if (node.chamfer > 0) args.push(`chamfer=${formatNumber(node.chamfer)}`)
+  args.push('anchor=CENTER')
+  return `rect(${args.join(', ')})`
+}
+
+function emitCircle(node: CircleNode): string {
+  return `circle(d=${formatNumber(node.diameter)}, anchor=CENTER)`
+}
+
+function emitEllipse(node: EllipseNode): string {
+  return `ellipse(d=${emitVec2(node.diameter)}, anchor=CENTER)`
+}
+
+function emitNgon(node: NgonNode): string {
+  const args = [`n=${Math.round(node.sides)}`, `d=${formatNumber(node.diameter)}`]
+  if (node.rounding > 0) args.push(`rounding=${formatNumber(node.rounding)}`)
+  args.push('anchor=CENTER')
+  return `regular_ngon(${args.join(', ')})`
+}
+
+function emitStar(node: StarNode): string {
+  return `star(n=${Math.round(node.points)}, d=${formatNumber(node.diameter)}, id=${formatNumber(node.innerDiameter)}, anchor=CENTER)`
+}
+
+function emitText(node: TextNode): string {
+  return [
+    `text(text=${emitString(node.text)}`,
+    `size=${formatNumber(node.size)}`,
+    `font=${emitString(node.font)}`,
+    `halign=${emitString(node.halign)}`,
+    `valign=${emitString(node.valign)}`,
+    'anchor=CENTER)'
+  ].join(', ')
+}
+
+function emitSvg(node: SvgNode): string {
+  const scale = openscadSvgScale(node.mmPerUnit, node.importScale)
+  const imported = `import(${emitString(`3dev-assets/${node.assetId}.svg`)}, scale=${formatNumber(scale)});`
+  const translated = `translate(${emitVec({ x: node.center.x, y: node.center.y, z: 0 })})\n${indent(imported, 4)}`
+  return translated
 }
 
 function emitCuboid(node: CuboidNode): string {
@@ -104,6 +195,14 @@ function emitColor(inner: string, appearance: Appearance): string {
 
 function emitVec(value: Vec3): string {
   return `[${formatNumber(value.x)}, ${formatNumber(value.y)}, ${formatNumber(value.z)}]`
+}
+
+function emitVec2(value: Vec2): string {
+  return `[${formatNumber(value.x)}, ${formatNumber(value.y)}]`
+}
+
+function emitString(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 }
 
 function indent(text: string, spaces: number): string {

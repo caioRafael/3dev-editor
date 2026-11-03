@@ -29,6 +29,7 @@
     "electron-updater": "^6.8.9",
     "manifold-3d": "^3.5.4",
     "monaco-editor": "^0.57.0",
+    "opentype.js": "^2.0.0",
     "three": "^0.187.0",
     "zustand": "^5.0.16"
   },

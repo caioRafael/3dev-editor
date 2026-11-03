@@ -8,36 +8,71 @@ import {
   roundVec,
   scaleVec
 } from './math'
+import { readSvgMetrics, roundVec2, svgCenter } from '../preview/svgMetrics'
 import {
   type BooleanKind,
   type BooleanNode,
+  type CircleNode,
   type CuboidNode,
   type CylinderNode,
+  type EllipseNode,
+  type Extrusion,
   type FeatureNode,
   type FeaturePatch,
+  type NgonNode,
   type PrimitiveKind,
+  type ProfileNode,
   type ProjectDocument,
+  type RectNode,
+  type ShapeProfileKind,
   type SphereNode,
+  type StarNode,
+  type SvgAsset,
+  type SvgNode,
+  type TextHalign,
+  type TextNode,
+  type TextValign,
   type Transform,
+  type Vec2,
   type Vec3,
+  DEFAULT_FONT,
   MIN_SIZE,
+  defaultExtrusion,
   identityTransform,
   isBooleanNode,
+  isCircleNode,
   isCuboidNode,
   isCylinderNode,
-  isSphereNode
+  isEllipseNode,
+  isNgonNode,
+  isProfileNode,
+  isRectNode,
+  isSphereNode,
+  isStarNode,
+  isSvgNode,
+  isTextNode
 } from './types'
 
 const PALETTE = ['#d97757', '#5b8def', '#6fbf73', '#e0b44f', '#b07cc6', '#4fb6c4']
 
-const LABELS: Record<PrimitiveKind | BooleanKind, string> = {
+const LABELS: Record<PrimitiveKind | BooleanKind | ShapeProfileKind | 'svg', string> = {
   cuboid: 'Cubo',
   cylinder: 'Cilindro',
   sphere: 'Esfera',
   union: 'União',
   difference: 'Diferença',
-  intersection: 'Interseção'
+  intersection: 'Interseção',
+  rect: 'Retângulo',
+  circle: 'Círculo',
+  ellipse: 'Elipse',
+  ngon: 'Polígono',
+  star: 'Estrela',
+  text: 'Texto',
+  svg: 'SVG'
 }
+
+const TEXT_ALIGNS_H: TextHalign[] = ['left', 'center', 'right']
+const TEXT_ALIGNS_V: TextValign[] = ['top', 'center', 'baseline', 'bottom']
 
 export interface CreatedNode {
   document: ProjectDocument
@@ -52,7 +87,18 @@ export interface BooleanResult {
 }
 
 export function createEmptyDocument(name = 'Sem título'): ProjectDocument {
-  return { version: 1, name, units: 'mm', fn: 48, nodes: {} }
+  return { version: 1, name, units: 'mm', fn: 48, nodes: {}, assets: {} }
+}
+
+export function referencedSvgAssets(document: ProjectDocument): { id: string; source: string }[] {
+  const ids = new Set<string>()
+  for (const node of Object.values(document.nodes)) {
+    if (isSvgNode(node)) ids.add(node.assetId)
+  }
+  return [...ids].flatMap((id) => {
+    const asset = document.assets[id]
+    return asset ? [{ id: asset.id, source: asset.source }] : []
+  })
 }
 
 export function getRoots(document: ProjectDocument): FeatureNode[] {
@@ -82,6 +128,68 @@ export function createPrimitive(document: ProjectDocument, kind: PrimitiveKind):
     document: { ...document, nodes: { ...document.nodes, [id]: node } },
     id,
     name
+  }
+}
+
+export function createProfile(document: ProjectDocument, kind: ShapeProfileKind): CreatedNode {
+  const id = crypto.randomUUID()
+  const name = nextName(document, LABELS[kind])
+  const node = createProfileNode(kind, featureShell(document, id, name))
+  return {
+    document: { ...document, nodes: { ...document.nodes, [id]: node } },
+    id,
+    name
+  }
+}
+
+export interface SvgImportResult {
+  document: ProjectDocument
+  id: string | null
+  name: string | null
+  error: string | null
+}
+
+export function createSvgProfile(
+  document: ProjectDocument,
+  fileName: string,
+  source: string
+): SvgImportResult {
+  const metrics = readSvgMetrics(source)
+  if (!metrics) {
+    return {
+      document,
+      id: null,
+      name: null,
+      error: 'O SVG precisa de um viewBox ou de largura e altura.'
+    }
+  }
+  const id = crypto.randomUUID()
+  const assetId = crypto.randomUUID()
+  const name = nextName(document, LABELS.svg)
+  const importScale = 1
+  const viewMin = roundVec2(metrics.viewMin)
+  const viewSize = roundVec2(metrics.viewSize)
+  const node: SvgNode = {
+    ...featureShell(document, id, name),
+    kind: 'svg',
+    extrusion: defaultExtrusion(),
+    assetId,
+    importScale,
+    mmPerUnit: metrics.mmPerUnit,
+    viewMin,
+    viewSize,
+    center: roundVec2(svgCenter(viewMin, viewSize, metrics.mmPerUnit, importScale))
+  }
+  const asset: SvgAsset = { id: assetId, name: fileName, kind: 'svg', source }
+  return {
+    document: {
+      ...document,
+      nodes: { ...document.nodes, [id]: node },
+      assets: { ...document.assets, [assetId]: asset }
+    },
+    id,
+    name,
+    error: null
   }
 }
 
@@ -163,7 +271,7 @@ export function deleteNodes(document: ProjectDocument, ids: string[]): ProjectDo
     delete next[id]
     nodes = next
   }
-  return { ...document, nodes: repairBooleans(nodes) }
+  return pruneAssets({ ...document, nodes: repairBooleans(nodes) })
 }
 
 export function patchNode(
@@ -210,6 +318,9 @@ export function patchNode(
     const limit = booleanRadiusLimit(localBounds(document, node))
     next = { ...next, rounding: Math.min(limit, rounding) }
   }
+  if (isProfileNode(next)) {
+    next = patchProfile(next, patch)
+  }
   return { ...document, nodes: { ...document.nodes, [id]: next } }
 }
 
@@ -253,6 +364,265 @@ export function collectDescendants(
   }
   walk(node)
   return ids
+}
+
+export function pruneAssets(document: ProjectDocument): ProjectDocument {
+  const used = new Set<string>()
+  for (const node of Object.values(document.nodes)) {
+    if (isSvgNode(node)) used.add(node.assetId)
+  }
+  const assets: Record<string, SvgAsset> = {}
+  for (const [id, asset] of Object.entries(document.assets)) {
+    if (used.has(id)) assets[id] = asset
+  }
+  if (Object.keys(assets).length === Object.keys(document.assets).length) return document
+  return { ...document, assets }
+}
+
+function featureShell(
+  document: ProjectDocument,
+  id: string,
+  name: string
+): Omit<RectNode, 'kind' | 'size' | 'rounding' | 'chamfer' | 'extrusion'> {
+  const transform = identityTransform()
+  transform.position.x = getRoots(document).length * 24
+  return {
+    id,
+    name,
+    visible: true,
+    locked: false,
+    consumedBy: null,
+    transform,
+    appearance: {
+      color: PALETTE[Object.keys(document.nodes).length % PALETTE.length],
+      opacity: 1
+    }
+  }
+}
+
+function createProfileNode(
+  kind: ShapeProfileKind,
+  shared: Omit<RectNode, 'kind' | 'size' | 'rounding' | 'chamfer' | 'extrusion'>
+): ProfileNode {
+  const extrusion = defaultExtrusion()
+  if (kind === 'rect') {
+    const node: RectNode = {
+      ...shared,
+      kind: 'rect',
+      size: { x: 20, y: 12 },
+      rounding: 0,
+      chamfer: 0,
+      extrusion
+    }
+    return node
+  }
+  if (kind === 'circle') {
+    const node: CircleNode = { ...shared, kind: 'circle', diameter: 16, extrusion }
+    return node
+  }
+  if (kind === 'ellipse') {
+    const node: EllipseNode = {
+      ...shared,
+      kind: 'ellipse',
+      diameter: { x: 20, y: 12 },
+      extrusion
+    }
+    return node
+  }
+  if (kind === 'ngon') {
+    const node: NgonNode = {
+      ...shared,
+      kind: 'ngon',
+      sides: 6,
+      diameter: 16,
+      rounding: 0,
+      extrusion
+    }
+    return node
+  }
+  if (kind === 'star') {
+    const node: StarNode = {
+      ...shared,
+      kind: 'star',
+      points: 5,
+      diameter: 18,
+      innerDiameter: 8,
+      extrusion
+    }
+    return node
+  }
+  const node: TextNode = {
+    ...shared,
+    kind: 'text',
+    text: 'Texto',
+    size: 10,
+    font: DEFAULT_FONT,
+    halign: 'center',
+    valign: 'center',
+    extrusion
+  }
+  return node
+}
+
+function patchProfile(node: ProfileNode, patch: FeaturePatch): ProfileNode {
+  const extrusion = sanitizeExtrusion(patch.extrusion ?? node.extrusion)
+  if (isRectNode(node)) {
+    const size = positiveVec2(patch.size2 ?? node.size)
+    let rounding = patch.rounding ?? node.rounding
+    let chamfer = patch.chamfer ?? node.chamfer
+    if (patch.rounding !== undefined && patch.rounding > 0) chamfer = 0
+    if (patch.chamfer !== undefined && patch.chamfer > 0) rounding = 0
+    const limit = cornerLimit(Math.min(size.x, size.y))
+    return {
+      ...node,
+      extrusion,
+      size,
+      rounding: Math.min(limit, Math.max(0, rounding)),
+      chamfer: Math.min(limit, Math.max(0, chamfer))
+    }
+  }
+  if (isCircleNode(node)) {
+    return { ...node, extrusion, diameter: positive(patch.diameter ?? node.diameter) }
+  }
+  if (isEllipseNode(node)) {
+    return { ...node, extrusion, diameter: positiveVec2(patch.diameter2 ?? node.diameter) }
+  }
+  if (isNgonNode(node)) {
+    const sides = clampInt(patch.sides ?? node.sides, 3, 32)
+    const diameter = positive(patch.diameter ?? node.diameter)
+    const limit = ngonRoundingLimit(diameter, sides)
+    return {
+      ...node,
+      extrusion,
+      sides,
+      diameter,
+      rounding: round3(Math.min(limit, Math.max(0, patch.rounding ?? node.rounding)))
+    }
+  }
+  if (isStarNode(node)) {
+    const points = clampInt(patch.points ?? node.points, 3, 32)
+    const diameter = positive(patch.diameter ?? node.diameter)
+    const inner = Math.max(0.05, patch.innerDiameter ?? node.innerDiameter)
+    return {
+      ...node,
+      extrusion,
+      points,
+      diameter,
+      innerDiameter: round3(Math.min(inner, Math.max(0.05, diameter - 0.05)))
+    }
+  }
+  if (isTextNode(node)) {
+    const source = patch.text ?? patch.name
+    const requested = source === undefined ? node.text : source.replace(/\s+/g, ' ').trim()
+    const halign = alignH(patch.halign) ?? node.halign
+    const valign = alignV(patch.valign) ?? node.valign
+    return {
+      ...node,
+      extrusion,
+      text: requested.length > 0 ? requested : node.text,
+      size: positive(patch.textSize ?? node.size),
+      font: (patch.font ?? node.font).trim() || DEFAULT_FONT,
+      halign,
+      valign
+    }
+  }
+  const importScale = round3(Math.min(100, Math.max(0.001, patch.importScale ?? node.importScale)))
+  const center =
+    patch.importScale === undefined
+      ? node.center
+      : roundVec2(svgCenter(node.viewMin, node.viewSize, node.mmPerUnit, importScale))
+  return { ...node, extrusion, importScale, center }
+}
+
+function scaleProfile(node: ProfileNode, scale: Vec3): ProfileNode {
+  const extrusion = { ...node.extrusion, height: scaledSize(node.extrusion.height, scale.z) }
+  const planar = (Math.abs(scale.x) + Math.abs(scale.y)) / 2
+  if (isRectNode(node)) {
+    const size = {
+      x: scaledSize(node.size.x, scale.x),
+      y: scaledSize(node.size.y, scale.y)
+    }
+    const limit = cornerLimit(Math.min(size.x, size.y))
+    return {
+      ...node,
+      size,
+      extrusion,
+      rounding: round3(Math.min(limit, node.rounding * planar)),
+      chamfer: round3(Math.min(limit, node.chamfer * planar))
+    }
+  }
+  if (isCircleNode(node)) return { ...node, extrusion, diameter: scaledSize(node.diameter, planar) }
+  if (isEllipseNode(node)) {
+    return {
+      ...node,
+      extrusion,
+      diameter: {
+        x: scaledSize(node.diameter.x, scale.x),
+        y: scaledSize(node.diameter.y, scale.y)
+      }
+    }
+  }
+  if (isNgonNode(node)) {
+    const diameter = scaledSize(node.diameter, planar)
+    const limit = ngonRoundingLimit(diameter, node.sides)
+    return {
+      ...node,
+      extrusion,
+      diameter,
+      rounding: round3(Math.min(limit, node.rounding * planar))
+    }
+  }
+  if (isStarNode(node)) {
+    const diameter = scaledSize(node.diameter, planar)
+    return {
+      ...node,
+      extrusion,
+      diameter,
+      innerDiameter: round3(Math.min(scaledSize(node.innerDiameter, planar), diameter - 0.05))
+    }
+  }
+  if (isTextNode(node)) return { ...node, extrusion, size: scaledSize(node.size, planar) }
+  const importScale = round3(Math.max(0.001, node.importScale * planar))
+  return {
+    ...node,
+    extrusion,
+    importScale,
+    center: roundVec2(svgCenter(node.viewMin, node.viewSize, node.mmPerUnit, importScale))
+  }
+}
+
+function sanitizeExtrusion(extrusion: Extrusion): Extrusion {
+  return {
+    height: positive(extrusion.height),
+    twist: round3(extrusion.twist),
+    scale: round3(Math.min(100, Math.max(0, extrusion.scale)))
+  }
+}
+
+function positiveVec2(value: Vec2): Vec2 {
+  return { x: positive(value.x), y: positive(value.y) }
+}
+
+function cornerLimit(span: number): number {
+  return round3(Math.max(0, span / 2 - 0.001))
+}
+
+function ngonRoundingLimit(diameter: number, sides: number): number {
+  return round3(Math.max(0, (diameter / 2) * Math.sin(Math.PI / sides) - 0.001))
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Math.round(value)))
+}
+
+function alignH(value: TextHalign | undefined): TextHalign | null {
+  if (!value) return null
+  return TEXT_ALIGNS_H.includes(value) ? value : null
+}
+
+function alignV(value: TextValign | undefined): TextValign | null {
+  if (!value) return null
+  return TEXT_ALIGNS_V.includes(value) ? value : null
 }
 
 function createPrimitiveNode(
@@ -349,6 +719,7 @@ function applyDimensionScale(node: FeatureNode, scale: Vec3): FeatureNode {
     const factor = (Math.abs(scale.x) + Math.abs(scale.y) + Math.abs(scale.z)) / 3
     return { ...node, rounding: round3(Math.max(0, node.rounding * factor)) }
   }
+  if (isProfileNode(node)) return scaleProfile(node, scale)
   return node
 }
 

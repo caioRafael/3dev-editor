@@ -1,13 +1,22 @@
 import { Euler, Quaternion, Vector3 } from 'three'
 import {
+  type Extrusion,
   type FeatureNode,
+  type ProfileNode,
   type ProjectDocument,
   type Transform,
   type Vec3,
   isBooleanNode,
+  isCircleNode,
   isCuboidNode,
   isCylinderNode,
-  isSphereNode
+  isEllipseNode,
+  isNgonNode,
+  isProfileNode,
+  isRectNode,
+  isSphereNode,
+  isStarNode,
+  isTextNode
 } from './types'
 
 export function round3(value: number): number {
@@ -35,6 +44,7 @@ export function localBounds(document: ProjectDocument, node: FeatureNode): Bound
   if (isCuboidNode(node)) return centeredBox(node.size.x, node.size.y, node.size.z)
   if (isCylinderNode(node)) return centeredBox(node.diameter, node.diameter, node.height)
   if (isSphereNode(node)) return centeredBox(node.diameter, node.diameter, node.diameter)
+  if (isProfileNode(node)) return profileBounds(node)
   if (!isBooleanNode(node)) return null
   const placed = node.childIds
     .map((id) => document.nodes[id])
@@ -126,6 +136,76 @@ function degreesToRadians(value: number): number {
 
 function radiansToDegrees(value: number): number {
   return (value * 180) / Math.PI
+}
+
+function profileBounds(node: ProfileNode): Bounds {
+  const span = profileSpan(node)
+  return extrudedBounds(span.width, span.depth, node.extrusion, span.offsetX, span.offsetY)
+}
+
+function profileSpan(node: ProfileNode): {
+  width: number
+  depth: number
+  offsetX: number
+  offsetY: number
+} {
+  if (isRectNode(node)) return { width: node.size.x, depth: node.size.y, offsetX: 0, offsetY: 0 }
+  if (isCircleNode(node)) {
+    return { width: node.diameter, depth: node.diameter, offsetX: 0, offsetY: 0 }
+  }
+  if (isEllipseNode(node)) {
+    return { width: node.diameter.x, depth: node.diameter.y, offsetX: 0, offsetY: 0 }
+  }
+  if (isNgonNode(node) || isStarNode(node)) {
+    return { width: node.diameter, depth: node.diameter, offsetX: 0, offsetY: 0 }
+  }
+  if (isTextNode(node)) {
+    const em = node.size / 0.72
+    return {
+      width: Math.max(em, Math.max(1, node.text.length) * em * 0.55),
+      depth: em * 1.4,
+      offsetX: 0,
+      offsetY: 0
+    }
+  }
+  const scale = node.mmPerUnit * node.importScale
+  const centerX = node.viewMin.x + node.viewSize.x / 2
+  const centerY = node.viewMin.y + node.viewSize.y / 2
+  return {
+    width: Math.max(0.1, node.viewSize.x * scale),
+    depth: Math.max(0.1, node.viewSize.y * scale),
+    offsetX: node.center.x + centerX * scale,
+    offsetY: node.center.y + centerY * scale
+  }
+}
+
+function extrudedBounds(
+  width: number,
+  depth: number,
+  extrusion: Extrusion,
+  offsetX: number,
+  offsetY: number
+): Bounds {
+  const angle = (extrusion.twist * Math.PI) / 180
+  const cos = Math.cos(angle)
+  const sin = Math.sin(angle)
+  const corners = [
+    [width / 2, depth / 2],
+    [width / 2, -depth / 2],
+    [-width / 2, depth / 2],
+    [-width / 2, -depth / 2]
+  ]
+  let maxX = 0
+  let maxY = 0
+  for (const [x, y] of corners) {
+    maxX = Math.max(maxX, Math.abs(x + offsetX))
+    maxY = Math.max(maxY, Math.abs(y + offsetY))
+    const rotatedX = x * cos - y * sin
+    const rotatedY = x * sin + y * cos
+    maxX = Math.max(maxX, Math.abs(rotatedX * extrusion.scale + offsetX))
+    maxY = Math.max(maxY, Math.abs(rotatedY * extrusion.scale + offsetY))
+  }
+  return centeredBox(Math.max(0.1, maxX * 2), Math.max(0.1, maxY * 2), extrusion.height)
 }
 
 function centeredBox(width: number, depth: number, height: number): Bounds {

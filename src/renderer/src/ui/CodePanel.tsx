@@ -120,7 +120,7 @@ export function CodePanel({ source }: { source: string }): React.JSX.Element {
           </span>
         ) : (
           <span className="min-w-0 flex-1 truncate text-[#6a7384]">
-            cuboid, cyl, spheroid, round3d, booleanos e transforms
+            cuboid, cyl, spheroid, perfis extrudados, booleanos e transforms
           </span>
         )}
         <button

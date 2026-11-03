@@ -12,12 +12,14 @@ import {
   createBoolean,
   createEmptyDocument,
   createPrimitive,
+  createProfile,
+  createSvgProfile,
   deleteNodes,
   patchNode,
   setNodeTransform,
   type BooleanResult
 } from './tree'
-import type { BooleanKind, PrimitiveKind } from './types'
+import type { BooleanKind, PrimitiveKind, ShapeProfileKind } from './types'
 
 const HISTORY_LIMIT = 50
 
@@ -48,6 +50,8 @@ interface EditorState {
   undo: () => void
   redo: () => void
   addPrimitive: (kind: PrimitiveKind) => void
+  addProfile: (kind: ShapeProfileKind) => void
+  addSvg: (fileName: string, source: string) => void
   applyBoolean: (kind: BooleanKind) => void
   removeSelected: () => void
   updateNode: (id: string, patch: FeaturePatch, recordHistory?: boolean) => void
@@ -167,6 +171,27 @@ export const useEditor = create<EditorState>((set) => ({
         ...commit(state, created.document),
         selection: [created.id],
         status: `${created.name} criado`
+      }
+    }),
+
+  addProfile: (kind) =>
+    set((state) => {
+      const created = createProfile(state.document, kind)
+      return {
+        ...commit(state, created.document),
+        selection: [created.id],
+        status: `${created.name} criado`
+      }
+    }),
+
+  addSvg: (fileName, source) =>
+    set((state) => {
+      const created = createSvgProfile(state.document, fileName, source)
+      if (!created.id) return { status: created.error ?? 'Não foi possível importar o SVG.' }
+      return {
+        ...commit(state, created.document),
+        selection: [created.id],
+        status: `${created.name ?? 'SVG'} importado`
       }
     }),
 

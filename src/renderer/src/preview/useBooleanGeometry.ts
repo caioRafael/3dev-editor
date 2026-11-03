@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { BufferAttribute, BufferGeometry } from 'three'
 import { requestBooleanMesh } from './booleanClient'
 import { buildBooleanMesh, subtreeKey, type SolidMeshData } from './manifoldPreview'
+import { prepareContours } from './prepareContours'
 import { useEditor } from '../document/store'
 import { type ProjectDocument, isBooleanNode } from '../document/types'
 
@@ -28,8 +29,14 @@ export function useBooleanGeometry(nodeId: string): BufferGeometry | null {
       })
     }
 
-    void buildBooleanMesh(current, nodeId, false)
-      .then((data) => show(data, false))
+    void prepareContours(current)
+      .then((contours) => {
+        if (cancelled) return null
+        return buildBooleanMesh(current, nodeId, false, contours).then((data) => {
+          show(data, false)
+          return contours
+        })
+      })
       .catch((error: unknown) => {
         if (cancelled) return
         useEditor.getState().setStatus(messageFrom(error))
@@ -50,7 +57,9 @@ export function useBooleanGeometry(nodeId: string): BufferGeometry | null {
       useEditor.getState().endPreview()
     }
     const timeout = window.setTimeout(() => {
-      requestBooleanMesh(useEditor.getState().document, nodeId)
+      const latest = useEditor.getState().document
+      void prepareContours(latest)
+        .then((contours) => requestBooleanMesh(latest, nodeId, contours))
         .then((data) => {
           if (cancelled) return
           if (!data || data.positions.length === 0) {

@@ -8,11 +8,13 @@ import {
   isBooleanNode,
   isCuboidNode,
   isCylinderNode,
+  isProfileNode,
   isSphereNode
 } from '../document/types'
 import { round3 } from '../document/math'
 import { useBooleanGeometry } from '../preview/useBooleanGeometry'
 import { useCuboidGeometry } from '../preview/useCuboidGeometry'
+import { useProfileGeometry } from '../preview/useProfileGeometry'
 import { useViewportInteraction, dragIdRef } from './interaction'
 
 interface FeatureViewProps {
@@ -60,7 +62,16 @@ export function FeatureView({ id }: FeatureViewProps): React.JSX.Element | null 
       {showMesh && isBooleanNode(node) ? (
         <BooleanMesh node={node} selected={selected} interactive={interactive} />
       ) : null}
-      {showMesh && !isBooleanNode(node) ? (
+      {showMesh && isProfileNode(node) ? (
+        <ProfileMesh
+          node={node}
+          selected={selected}
+          interactive={interactive}
+          segments={segments}
+          ghost={Boolean(node.consumedBy)}
+        />
+      ) : null}
+      {showMesh && !isBooleanNode(node) && !isProfileNode(node) ? (
         <PrimitiveMesh
           node={node}
           selected={selected}
@@ -155,6 +166,45 @@ function PrimitiveMesh({
           args={[node.diameter / 2, segments, Math.max(8, Math.round(segments / 2))]}
         />
       ) : null}
+      <meshStandardMaterial
+        color={node.appearance.color}
+        opacity={opacity}
+        transparent={opacity < 0.999 || ghost}
+        metalness={0.06}
+        roughness={0.58}
+        emissive={selected ? '#ffb088' : '#000000'}
+        emissiveIntensity={selected ? 0.28 : 0}
+        polygonOffset={ghost}
+        polygonOffsetFactor={ghost ? -2 : 0}
+      />
+      {selected ? <Edges threshold={20} color="#fff7f2" /> : null}
+    </mesh>
+  )
+}
+
+function ProfileMesh({
+  node,
+  selected,
+  interactive,
+  segments,
+  ghost
+}: {
+  node: FeatureNode
+  selected: boolean
+  interactive: boolean
+  segments: number
+  ghost: boolean
+}): React.JSX.Element | null {
+  const geometry = useProfileGeometry(node, segments)
+  if (!geometry) return null
+  const opacity = ghost ? Math.min(node.appearance.opacity, 0.45) : node.appearance.opacity
+  return (
+    <mesh
+      geometry={geometry}
+      castShadow
+      onPointerDown={(event) => selectFromEvent(event, node.id)}
+      {...(interactive ? {} : { raycast: skipRaycast })}
+    >
       <meshStandardMaterial
         color={node.appearance.color}
         opacity={opacity}

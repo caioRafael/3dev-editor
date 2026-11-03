@@ -1,10 +1,12 @@
 import type { ProjectDocument } from '../document/types'
+import type { ContourSet } from './contours'
 import type { SolidMeshData } from './manifoldPreview'
 
 interface BooleanJob {
   id: number
   document: ProjectDocument
   nodeId: string
+  contours: Record<string, ContourSet>
 }
 
 interface BooleanResult {
@@ -28,7 +30,8 @@ const waiters = new Map<number, Waiter>()
 
 export function requestBooleanMesh(
   document: ProjectDocument,
-  nodeId: string
+  nodeId: string,
+  contours: Record<string, ContourSet>
 ): Promise<SolidMeshData | null> {
   const id = nextId + 1
   nextId = id
@@ -37,7 +40,7 @@ export function requestBooleanMesh(
       waiters.get(latest.id)?.resolve(null)
       waiters.delete(latest.id)
     }
-    latest = { id, document, nodeId }
+    latest = { id, document, nodeId, contours }
     waiters.set(id, { resolve, reject })
     if (running) dropRunningWork()
     pump()

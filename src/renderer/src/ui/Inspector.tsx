@@ -3,12 +3,22 @@ import { booleanRadiusLimit, localBounds, maxEdgeRadius } from '../document/math
 import { useEditor } from '../document/store'
 import {
   type BooleanNode,
+  type Extrusion,
   type FeatureNode,
+  type Vec2,
   type Vec3,
   isBooleanNode,
+  isCircleNode,
   isCuboidNode,
   isCylinderNode,
-  isSphereNode
+  isEllipseNode,
+  isNgonNode,
+  isProfileNode,
+  isRectNode,
+  isSphereNode,
+  isStarNode,
+  isSvgNode,
+  isTextNode
 } from '../document/types'
 
 export function Inspector(): React.JSX.Element {
@@ -121,6 +131,109 @@ function NodeFields({
           onCommit={(diameter) => useEditor.getState().updateNode(id, { diameter })}
         />
       ) : null}
+      {isRectNode(node) ? (
+        <>
+          <PairFields
+            label="Tamanho"
+            value={node.size}
+            disabled={disabled}
+            onCommit={(size2) => useEditor.getState().updateNode(id, { size2 })}
+          />
+          <EdgeControl
+            label="Arredondamento"
+            value={node.rounding}
+            max={Math.max(0, Math.min(node.size.x, node.size.y) / 2 - 0.001)}
+            disabled={disabled}
+            onPreview={(rounding) => useEditor.getState().updateNode(id, { rounding }, false)}
+            onCommit={(rounding) => useEditor.getState().updateNode(id, { rounding })}
+          />
+          <EdgeControl
+            label="Chanfro"
+            value={node.chamfer}
+            max={Math.max(0, Math.min(node.size.x, node.size.y) / 2 - 0.001)}
+            disabled={disabled}
+            onPreview={(chamfer) => useEditor.getState().updateNode(id, { chamfer }, false)}
+            onCommit={(chamfer) => useEditor.getState().updateNode(id, { chamfer })}
+          />
+        </>
+      ) : null}
+      {isCircleNode(node) ? (
+        <NumberField
+          label="Diâmetro"
+          value={node.diameter}
+          disabled={disabled}
+          onCommit={(diameter) => useEditor.getState().updateNode(id, { diameter })}
+        />
+      ) : null}
+      {isEllipseNode(node) ? (
+        <PairFields
+          label="Diâmetro"
+          value={node.diameter}
+          disabled={disabled}
+          onCommit={(diameter2) => useEditor.getState().updateNode(id, { diameter2 })}
+        />
+      ) : null}
+      {isNgonNode(node) ? (
+        <>
+          <NumberField
+            label="Lados"
+            value={node.sides}
+            disabled={disabled}
+            onCommit={(sides) => useEditor.getState().updateNode(id, { sides })}
+          />
+          <NumberField
+            label="Diâmetro"
+            value={node.diameter}
+            disabled={disabled}
+            onCommit={(diameter) => useEditor.getState().updateNode(id, { diameter })}
+          />
+          <NumberField
+            label="Arredondamento"
+            value={node.rounding}
+            disabled={disabled}
+            onCommit={(rounding) => useEditor.getState().updateNode(id, { rounding })}
+          />
+        </>
+      ) : null}
+      {isStarNode(node) ? (
+        <>
+          <NumberField
+            label="Pontas"
+            value={node.points}
+            disabled={disabled}
+            onCommit={(points) => useEditor.getState().updateNode(id, { points })}
+          />
+          <NumberField
+            label="Diâmetro"
+            value={node.diameter}
+            disabled={disabled}
+            onCommit={(diameter) => useEditor.getState().updateNode(id, { diameter })}
+          />
+          <NumberField
+            label="Diâmetro interno"
+            value={node.innerDiameter}
+            disabled={disabled}
+            onCommit={(innerDiameter) => useEditor.getState().updateNode(id, { innerDiameter })}
+          />
+        </>
+      ) : null}
+      {isTextNode(node) ? <TextFields id={id} node={node} disabled={disabled} /> : null}
+      {isSvgNode(node) ? (
+        <NumberField
+          label="Escala"
+          value={node.importScale}
+          disabled={disabled}
+          onCommit={(importScale) => useEditor.getState().updateNode(id, { importScale })}
+        />
+      ) : null}
+      {isProfileNode(node) ? (
+        <ExtrusionFields id={id} extrusion={node.extrusion} disabled={disabled} />
+      ) : null}
+      {isTextNode(node) ? (
+        <p className="text-[#8b93a3]">
+          A prévia rápida usa Liberation Sans. A prévia exata usa a fonte instalada no OpenSCAD.
+        </p>
+      ) : null}
       {isBooleanNode(node) ? <BooleanRounding id={id} node={node} disabled={disabled} /> : null}
       <label className="flex items-center justify-between gap-2">
         Cor
@@ -156,6 +269,196 @@ function NodeFields({
         Travado
       </label>
     </div>
+  )
+}
+
+function ExtrusionFields({
+  id,
+  extrusion,
+  disabled
+}: {
+  id: string
+  extrusion: Extrusion
+  disabled: boolean
+}): React.JSX.Element {
+  const commit = (patch: Partial<Extrusion>): void => {
+    useEditor.getState().updateNode(id, { extrusion: { ...extrusion, ...patch } })
+  }
+  return (
+    <>
+      <NumberField
+        label="Altura"
+        value={extrusion.height}
+        disabled={disabled}
+        onCommit={(height) => commit({ height })}
+      />
+      <NumberField
+        label="Torção"
+        value={extrusion.twist}
+        disabled={disabled}
+        onCommit={(twist) => commit({ twist })}
+      />
+      <NumberField
+        label="Escala do topo"
+        value={extrusion.scale}
+        disabled={disabled}
+        onCommit={(scale) => commit({ scale })}
+      />
+    </>
+  )
+}
+
+function TextFields({
+  id,
+  node,
+  disabled
+}: {
+  id: string
+  node: FeatureNode
+  disabled: boolean
+}): React.JSX.Element | null {
+  if (!isTextNode(node)) return null
+  return (
+    <>
+      <TextInput
+        key={node.text}
+        label="Texto"
+        value={node.text}
+        disabled={disabled}
+        onCommit={(text) => useEditor.getState().updateNode(id, { text })}
+      />
+      <NumberField
+        label="Tamanho"
+        value={node.size}
+        disabled={disabled}
+        onCommit={(textSize) => useEditor.getState().updateNode(id, { textSize })}
+      />
+      <TextInput
+        key={node.font}
+        label="Fonte"
+        value={node.font}
+        disabled={disabled}
+        onCommit={(font) => useEditor.getState().updateNode(id, { font })}
+      />
+      <ChoiceField
+        label="Horizontal"
+        value={node.halign}
+        disabled={disabled}
+        options={[
+          { value: 'left', label: 'Esquerda' },
+          { value: 'center', label: 'Centro' },
+          { value: 'right', label: 'Direita' }
+        ]}
+        onCommit={(halign) => useEditor.getState().updateNode(id, { halign })}
+      />
+      <ChoiceField
+        label="Vertical"
+        value={node.valign}
+        disabled={disabled}
+        options={[
+          { value: 'top', label: 'Topo' },
+          { value: 'center', label: 'Centro' },
+          { value: 'baseline', label: 'Base' },
+          { value: 'bottom', label: 'Fundo' }
+        ]}
+        onCommit={(valign) => useEditor.getState().updateNode(id, { valign })}
+      />
+    </>
+  )
+}
+
+function PairFields({
+  label,
+  value,
+  disabled,
+  onCommit
+}: {
+  label: string
+  value: Vec2
+  disabled: boolean
+  onCommit: (value: Vec2) => void
+}): React.JSX.Element {
+  return (
+    <fieldset className="flex flex-col gap-1" disabled={disabled}>
+      <legend>{label}</legend>
+      <div className="grid grid-cols-2 gap-1">
+        <NumberField
+          label="X"
+          value={value.x}
+          disabled={disabled}
+          onCommit={(x) => onCommit({ ...value, x })}
+        />
+        <NumberField
+          label="Y"
+          value={value.y}
+          disabled={disabled}
+          onCommit={(y) => onCommit({ ...value, y })}
+        />
+      </div>
+    </fieldset>
+  )
+}
+
+function TextInput({
+  label,
+  value,
+  disabled,
+  onCommit
+}: {
+  label: string
+  value: string
+  disabled: boolean
+  onCommit: (value: string) => void
+}): React.JSX.Element {
+  const [text, setText] = useState(value)
+  return (
+    <label className="flex flex-col gap-1">
+      {label}
+      <input
+        className={inputClass}
+        value={text}
+        disabled={disabled}
+        onChange={(event) => setText(event.target.value)}
+        onBlur={() => {
+          if (text !== value) onCommit(text)
+        }}
+      />
+    </label>
+  )
+}
+
+function ChoiceField<T extends string>({
+  label,
+  value,
+  options,
+  disabled,
+  onCommit
+}: {
+  label: string
+  value: T
+  options: { value: T; label: string }[]
+  disabled: boolean
+  onCommit: (value: T) => void
+}): React.JSX.Element {
+  return (
+    <label className="flex flex-col gap-1">
+      {label}
+      <select
+        className={inputClass}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => {
+          const next = options.find((option) => option.value === event.target.value)
+          if (next) onCommit(next.value)
+        }}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
   )
 }
 

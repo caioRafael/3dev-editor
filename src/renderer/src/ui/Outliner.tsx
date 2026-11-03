@@ -13,7 +13,7 @@ export function Outliner(): React.JSX.Element {
       <div className="min-h-0 flex-1 overflow-auto p-2">
         {roots.length === 0 ? (
           <p className="px-2 py-3 text-[12px] text-[#8b93a3]">
-            Nenhum sólido. Crie um cubo, cilindro ou esfera.
+            Nenhum sólido. Crie um cubo, cilindro, esfera ou perfil.
           </p>
         ) : (
           roots.map((node) => <OutlinerNode key={node.id} id={node.id} depth={0} />)

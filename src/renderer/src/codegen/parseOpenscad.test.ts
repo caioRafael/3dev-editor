@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { generateOpenscad } from './openscad'
 import { parseOpenscad } from './parseOpenscad'
-import { createBoolean, createEmptyDocument, createPrimitive } from '../document/tree'
+import {
+  createBoolean,
+  createEmptyDocument,
+  createPrimitive,
+  createProfile,
+  createSvgProfile
+} from '../document/tree'
 import { type CuboidNode, type SphereNode } from '../document/types'
 import { useEditor } from '../document/store'
 
@@ -132,6 +138,30 @@ cuboid([10, 10, 10], rounding=1, chamfer=1, anchor=CENTER);
     expect(parsed.ok).toBe(false)
     if (parsed.ok) return
     expect(parsed.message).toContain('ordem')
+  })
+
+  it('round-trips an extruded profile and keeps its id', () => {
+    const created = createProfile(createEmptyDocument(), 'text')
+    const source = generateOpenscad(created.document)
+    const parsed = parseOpenscad(source, created.document)
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(generateOpenscad(parsed.document)).toBe(source)
+    expect(parsed.document.nodes[created.id]?.kind).toBe('text')
+  })
+
+  it('round-trips an svg import against the stored asset', () => {
+    const created = createSvgProfile(
+      createEmptyDocument(),
+      'mark.svg',
+      '<svg viewBox="0 0 8 4" width="8mm" height="4mm"></svg>'
+    )
+    const source = generateOpenscad(created.document)
+    const parsed = parseOpenscad(source, created.document)
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(generateOpenscad(parsed.document)).toBe(source)
+    expect(parsed.document.assets).toEqual(created.document.assets)
   })
 
   it('adds a sphere written into the source', () => {

@@ -1,5 +1,6 @@
 import { useEditor } from '../document/store'
 import { parseProjectDocument } from '../document/parse'
+import { referencedSvgAssets } from '../document/tree'
 import type { FileResult } from '../../../shared/api'
 import { readEditorApi } from './editorApi'
 
@@ -63,14 +64,16 @@ async function saveProject(): Promise<void> {
 async function exportScad(source: string): Promise<void> {
   const api = editorApi()
   if (!api) return
-  applyFileResult(await api.exportScad(source), 'OpenSCAD exportado.')
+  const assets = referencedSvgAssets(useEditor.getState().document)
+  applyFileResult(await api.exportScad(source, assets), 'OpenSCAD exportado.')
 }
 
 async function exportStl(source: string): Promise<void> {
   const api = editorApi()
   if (!api) return
   useEditor.getState().setStatus('Exportando STL...')
-  applyFileResult(await api.exportStl(source), 'STL exportado.')
+  const assets = referencedSvgAssets(useEditor.getState().document)
+  applyFileResult(await api.exportStl(source, assets), 'STL exportado.')
 }
 
 function applyFileResult(result: FileResult, success: string): void {

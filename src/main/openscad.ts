@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { constants, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto'
 import { promisify } from 'node:util'
 import { app } from 'electron'
 import { is } from '@electron-toolkit/utils'
-import type { OpenscadStatus, PreviewStlResult } from '../shared/api'
+import type { OpenscadStatus, PreviewStlResult, ScadAsset } from '../shared/api'
 
 const execFileAsync = promisify(execFile)
 const previewCache = new Map<string, Uint8Array>()
@@ -65,13 +65,16 @@ export async function detectOpenscad(): Promise<OpenscadStatus> {
   }
 }
 
-export async function renderStl(source: string): Promise<PreviewStlResult> {
+export async function renderStl(
+  source: string,
+  assets: ScadAsset[] = []
+): Promise<PreviewStlResult> {
   const status = cachedCommand
     ? { available: true, command: cachedCommand, message: cachedCommand }
     : await detectOpenscad()
   if (!status.available || !status.command) return { ok: false, message: status.message }
 
-  const hash = createHash('sha256').update(source).digest('hex')
+  const hash = hashSource(source, assets)
   const cached = previewCache.get(hash)
   if (cached) return { ok: true, message: '', stl: cached }
 
@@ -80,6 +83,7 @@ export async function renderStl(source: string): Promise<PreviewStlResult> {
   const stlPath = join(directory, 'model.stl')
   try {
     await writeFile(scadPath, source, 'utf8')
+    await writeAssets(directory, assets)
     await execFileAsync(status.command, ['-o', stlPath, scadPath], {
       env: { ...process.env, OPENSCADPATH: openscadLibraryPath() },
       timeout: 120000,
@@ -98,6 +102,25 @@ export async function renderStl(source: string): Promise<PreviewStlResult> {
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+}
+
+export async function writeAssets(directory: string, assets: ScadAsset[]): Promise<void> {
+  if (assets.length === 0) return
+  const assetDirectory = join(directory, '3dev-assets')
+  await mkdir(assetDirectory, { recursive: true })
+  for (const asset of assets) {
+    await writeFile(join(assetDirectory, `${asset.id}.svg`), asset.source, 'utf8')
+  }
+}
+
+function hashSource(source: string, assets: ScadAsset[]): string {
+  const hash = createHash('sha256')
+  hash.update(source)
+  for (const asset of [...assets].sort((left, right) => left.id.localeCompare(right.id))) {
+    hash.update(asset.id)
+    hash.update(asset.source)
+  }
+  return hash.digest('hex')
 }
 
 async function isExecutable(filePath: string): Promise<boolean> {

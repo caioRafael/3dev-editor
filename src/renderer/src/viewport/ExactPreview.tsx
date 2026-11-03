@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { BufferGeometry, MeshStandardMaterial } from 'three'
 import { STLLoader } from 'three/addons/loaders/STLLoader.js'
 import { useEditor } from '../document/store'
+import { referencedSvgAssets } from '../document/tree'
 
 const loader = new STLLoader()
 const material = new MeshStandardMaterial({ color: '#d7dde6', metalness: 0.08, roughness: 0.48 })
@@ -9,6 +10,11 @@ const material = new MeshStandardMaterial({ color: '#d7dde6', metalness: 0.08, r
 export function ExactPreview({ source }: { source: string }): React.JSX.Element | null {
   const previewMode = useEditor((state) => state.previewMode)
   const previewNonce = useEditor((state) => state.previewNonce)
+  const assetKey = useEditor((state) =>
+    referencedSvgAssets(state.document)
+      .map((asset) => `${asset.id}:${asset.source.length}`)
+      .join('|')
+  )
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null)
 
   useEffect(() => {
@@ -22,8 +28,9 @@ export function ExactPreview({ source }: { source: string }): React.JSX.Element 
     const timer = window.setTimeout(
       () => {
         useEditor.getState().setStatus('Renderizando com OpenSCAD...')
+        const assets = referencedSvgAssets(useEditor.getState().document)
         void api
-          .previewStl(source)
+          .previewStl(source, assets)
           .then((result) => {
             if (cancelled) return
             const bytes = result.stl ? normalizeBytes(result.stl) : null
@@ -52,7 +59,7 @@ export function ExactPreview({ source }: { source: string }): React.JSX.Element 
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [previewMode, previewNonce, source])
+  }, [previewMode, previewNonce, source, assetKey])
 
   useEffect(() => {
     return () => {

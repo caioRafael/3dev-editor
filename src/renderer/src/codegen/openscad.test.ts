@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { generateOpenscad } from './openscad'
-import { createBoolean, createEmptyDocument, createPrimitive } from '../document/tree'
+import {
+  createBoolean,
+  createEmptyDocument,
+  createPrimitive,
+  createProfile,
+  createSvgProfile
+} from '../document/tree'
 import {
   type CuboidNode,
   type CylinderNode,
@@ -160,6 +166,26 @@ translate([0, 0, 0])
     expect(source).not.toContain('rounding=')
   })
 
+  it('extrudes a centered rectangle profile', () => {
+    const created = createProfile(createEmptyDocument(), 'rect')
+    const source = generateOpenscad(created.document)
+    expect(source).toContain('linear_extrude(height=4, center=true, twist=0, scale=1)')
+    expect(source).toContain('rect(size=[20, 12], anchor=CENTER);')
+    expect(source).not.toContain('rounding=')
+  })
+
+  it('imports an svg from the project assets folder', () => {
+    const created = createSvgProfile(
+      createEmptyDocument(),
+      'logo.svg',
+      '<svg viewBox="0 0 20 10" xmlns="http://www.w3.org/2000/svg"></svg>'
+    )
+    const source = generateOpenscad(created.document)
+    const assetId = Object.keys(created.document.assets)[0]
+    expect(source).toContain(`import("3dev-assets/${assetId}.svg", scale=3.78);`)
+    expect(source).toContain('translate([-10, -5, 0])')
+  })
+
   it('keeps boolean children in local coordinates after creation', () => {
     let documentState = createEmptyDocument()
     const first = createPrimitive(documentState, 'cuboid')
@@ -175,7 +201,7 @@ translate([0, 0, 0])
 })
 
 function document(nodes: Record<string, FeatureNode>): ProjectDocument {
-  return { version: 1, name: 'example', units: 'mm', fn: 48, nodes }
+  return { version: 1, name: 'example', units: 'mm', fn: 48, nodes, assets: {} }
 }
 
 function cuboid(id: string, patch: Partial<CuboidNode> = {}): CuboidNode {
