@@ -1,0 +1,40 @@
+@import 'tailwindcss';
+@import './base.css';
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  display: block;
+  background: #14161b;
+  background-image: none;
+}
+
+#root {
+  display: block;
+  margin: 0;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3a4150;
+  border-radius: 99px;
+}
