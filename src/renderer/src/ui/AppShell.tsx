@@ -54,8 +54,8 @@ export function AppShell(): React.JSX.Element {
           <Outliner />
           <FileTree />
         </aside>
-        <Toolbar />
         <div className="flex min-w-0 flex-1 flex-col">
+          <Toolbar />
           <div className="relative min-h-0 flex-1">
             <Viewport source={source} />
           </div>

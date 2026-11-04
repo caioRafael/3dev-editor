@@ -31,15 +31,15 @@ A janela tem seis regiões.
 
 ![Editor vazio, com a grade isométrica e o modelo OpenSCAD vazio](images/01-editor-vazio.png)
 
-| Região          | Função                                                                                                 |
-| --------------- | ------------------------------------------------------------------------------------------------------ |
-| Barra superior  | Novo, Abrir, Salvar, Exportar SCAD, Renderizar e Exportar STL. À direita, o caminho do arquivo aberto. |
-| Modelo          | Árvore dos sólidos raiz. Filhos de uma operação booleana aparecem indentados.                          |
-| Ferramentas     | Selecionar, Mover, Girar, Escalar, primitivas e booleanos.                                             |
-| Viewport        | Cena Three.js, grade de 10 mm, eixos e câmera isométrica.                                              |
-| OpenSCAD        | Editor Monaco com o fonte gerado. Pode ser editado.                                                    |
-| Propriedades    | Nome, transformação, dimensões, cor, opacidade e trava do sólido selecionado.                          |
-| Barra de status | Unidade (`mm`), `$fn`, modo de prévia, disponibilidade do OpenSCAD e a última mensagem.                |
+| Região          | Função                                                                                                          |
+| --------------- | --------------------------------------------------------------------------------------------------------------- |
+| Barra superior  | Novo, Abrir, Salvar, Exportar SCAD, Renderizar e Exportar STL. À direita, o caminho do arquivo aberto.          |
+| Modelo          | Árvore dos sólidos raiz. Filhos de uma operação booleana aparecem indentados.                                   |
+| Ferramentas     | Faixa no topo da vista: selecionar, mover, girar, escalar e booleanos em ícones. Formas 3D e 2D ficam num menu. |
+| Viewport        | Cena Three.js, grade de 10 mm, eixos e câmera isométrica.                                                       |
+| OpenSCAD        | Editor Monaco com o fonte gerado. Pode ser editado.                                                             |
+| Propriedades    | Nome, transformação, dimensões, cor, opacidade e trava do sólido selecionado.                                   |
+| Barra de status | Unidade (`mm`), `$fn`, modo de prévia, disponibilidade do OpenSCAD e a última mensagem.                         |
 
 A câmera nasce em `[90, -140, 80]`, com “cima” em Z, olhando para a origem. Botão direito orbita, botão do meio desloca, roda aproxima. O botão esquerdo fica livre para selecionar sólidos e usar os gizmos.
 
