@@ -129,9 +129,16 @@ export interface SvgAsset {
   source: string
 }
 
+export interface ComponentInstanceNode extends FeatureBase {
+  kind: 'component'
+  componentName: string
+  scale: Vec3
+}
+
 export type ProfileNode =
   RectNode | CircleNode | EllipseNode | NgonNode | StarNode | TextNode | SvgNode
-export type FeatureNode = CuboidNode | CylinderNode | SphereNode | BooleanNode | ProfileNode
+export type FeatureNode =
+  CuboidNode | CylinderNode | SphereNode | BooleanNode | ProfileNode | ComponentInstanceNode
 export type BooleanKind = BooleanNode['kind']
 export type PrimitiveKind = 'cuboid' | 'cylinder' | 'sphere'
 export type ProfileKind = ProfileNode['kind']
@@ -141,13 +148,18 @@ export type PreviewMode = 'fast' | 'openscad'
 
 export const DEFAULT_FONT = 'Liberation Sans'
 
+export interface ModelFile {
+  nodes: Record<string, FeatureNode>
+  assets: Record<string, SvgAsset>
+}
+
 export interface ProjectDocument {
-  version: 1
+  version: 2
   name: string
   units: 'mm'
   fn: number
-  nodes: Record<string, FeatureNode>
-  assets: Record<string, SvgAsset>
+  activeFile: string
+  files: Record<string, ModelFile>
 }
 
 export interface FeaturePatch {
@@ -173,6 +185,7 @@ export interface FeaturePatch {
   halign?: TextHalign
   valign?: TextValign
   importScale?: number
+  scale?: Vec3
 }
 
 export function zeroVec(): Vec3 {
@@ -185,6 +198,10 @@ export function identityTransform(): Transform {
 
 export function isBooleanNode(node: FeatureNode): node is BooleanNode {
   return node.kind === 'union' || node.kind === 'difference' || node.kind === 'intersection'
+}
+
+export function isComponentNode(node: FeatureNode): node is ComponentInstanceNode {
+  return node.kind === 'component'
 }
 
 export function isCuboidNode(node: FeatureNode): node is CuboidNode {

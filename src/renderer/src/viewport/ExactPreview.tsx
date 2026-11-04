@@ -1,15 +1,21 @@
 import { useEffect, useState } from 'react'
 import { BufferGeometry, MeshStandardMaterial } from 'three'
 import { STLLoader } from 'three/addons/loaders/STLLoader.js'
+import { activeEntryPath, generateProjectSources } from '../codegen/openscad'
 import { useEditor } from '../document/store'
 import { referencedSvgAssets } from '../document/tree'
 
 const loader = new STLLoader()
 const material = new MeshStandardMaterial({ color: '#d7dde6', metalness: 0.08, roughness: 0.48 })
 
-export function ExactPreview({ source }: { source: string }): React.JSX.Element | null {
+export function ExactPreview(): React.JSX.Element | null {
   const previewMode = useEditor((state) => state.previewMode)
   const previewNonce = useEditor((state) => state.previewNonce)
+  const bundleKey = useEditor((state) =>
+    generateProjectSources(state.document)
+      .map((file) => `${activeEntryPath(state.document)}:${file.path}:${file.source}`)
+      .join('\n')
+  )
   const assetKey = useEditor((state) =>
     referencedSvgAssets(state.document)
       .map((asset) => `${asset.id}:${asset.source.length}`)
@@ -28,9 +34,10 @@ export function ExactPreview({ source }: { source: string }): React.JSX.Element 
     const timer = window.setTimeout(
       () => {
         useEditor.getState().setStatus('Renderizando com OpenSCAD...')
-        const assets = referencedSvgAssets(useEditor.getState().document)
+        const current = useEditor.getState().document
+        const assets = referencedSvgAssets(current)
         void api
-          .previewStl(source, assets)
+          .previewStl(activeEntryPath(current), generateProjectSources(current), assets)
           .then((result) => {
             if (cancelled) return
             const bytes = result.stl ? normalizeBytes(result.stl) : null
@@ -59,7 +66,7 @@ export function ExactPreview({ source }: { source: string }): React.JSX.Element 
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [previewMode, previewNonce, source, assetKey])
+  }, [previewMode, previewNonce, bundleKey, assetKey])
 
   useEffect(() => {
     return () => {

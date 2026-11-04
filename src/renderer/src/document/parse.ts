@@ -1,13 +1,16 @@
+import { introducesCycle, MAIN_FILE } from './files'
 import {
   type Appearance,
   type BooleanKind,
   type BooleanNode,
   type CircleNode,
+  type ComponentInstanceNode,
   type CuboidNode,
   type CylinderNode,
   type EllipseNode,
   type Extrusion,
   type FeatureNode,
+  type ModelFile,
   type NgonNode,
   type ProjectDocument,
   type RectNode,
@@ -24,26 +27,75 @@ import {
   DEFAULT_COLOR,
   DEFAULT_FONT,
   isBooleanNode,
+  isComponentNode,
   isRecord,
   isSvgNode
 } from './types'
 
 export function parseProjectDocument(value: unknown): ProjectDocument | null {
   if (!isRecord(value)) return null
-  if (value.version !== 1 || value.units !== 'mm' || typeof value.name !== 'string') return null
+  if (value.units !== 'mm' || typeof value.name !== 'string') return null
   if (typeof value.fn !== 'number' || !Number.isFinite(value.fn)) return null
-  if (!isRecord(value.nodes)) return null
+  if (value.version === 1) return parseVersionOne(value)
+  if (value.version === 2) return parseVersionTwo(value)
+  return null
+}
 
+function parseVersionOne(value: Record<string, unknown>): ProjectDocument | null {
+  const file = parseModelFile(value.nodes, value.assets)
+  if (!file) return null
+  return finishDocument(value.name as string, value.fn as number, MAIN_FILE, { [MAIN_FILE]: file })
+}
+
+function parseVersionTwo(value: Record<string, unknown>): ProjectDocument | null {
+  if (!isRecord(value.files)) return null
+  const files: Record<string, ModelFile> = {}
+  for (const [name, raw] of Object.entries(value.files)) {
+    if (!isFileName(name) || !isRecord(raw)) return null
+    const file = parseModelFile(raw.nodes, raw.assets)
+    if (!file) return null
+    files[name] = file
+  }
+  if (!files[MAIN_FILE]) return null
+  const activeFile = typeof value.activeFile === 'string' ? value.activeFile : MAIN_FILE
+  return finishDocument(value.name as string, value.fn as number, activeFile, files)
+}
+
+function finishDocument(
+  name: string,
+  fn: number,
+  activeFile: string,
+  files: Record<string, ModelFile>
+): ProjectDocument | null {
+  for (const [fileName, file] of Object.entries(files)) {
+    for (const node of Object.values(file.nodes)) {
+      if (!isComponentNode(node)) continue
+      if (!files[node.componentName] || node.componentName === MAIN_FILE) return null
+      if (
+        introducesCycle(
+          { version: 2, name, units: 'mm', fn, activeFile: fileName, files },
+          fileName,
+          node.componentName
+        )
+      ) {
+        return null
+      }
+    }
+  }
+  const resolvedActive = files[activeFile] ? activeFile : MAIN_FILE
+  return { version: 2, name, units: 'mm', fn, activeFile: resolvedActive, files }
+}
+
+function parseModelFile(nodesValue: unknown, assetsValue: unknown): ModelFile | null {
+  if (!isRecord(nodesValue)) return null
   const nodes: Record<string, FeatureNode> = {}
-  for (const [id, raw] of Object.entries(value.nodes)) {
+  for (const [id, raw] of Object.entries(nodesValue)) {
     const node = parseNode(id, raw)
     if (!node) return null
     nodes[id] = node
   }
-
-  const assets = parseAssets(value.assets)
+  const assets = parseAssets(assetsValue)
   if (!assets) return null
-
   for (const node of Object.values(nodes)) {
     if (node.consumedBy !== null && !nodes[node.consumedBy]) return null
     if (isSvgNode(node) && !assets[node.assetId]) return null
@@ -53,15 +105,11 @@ export function parseProjectDocument(value: unknown): ProjectDocument | null {
       if (!child || child.consumedBy !== node.id) return null
     }
   }
+  return { nodes, assets }
+}
 
-  return {
-    version: 1,
-    name: value.name,
-    units: 'mm',
-    fn: value.fn,
-    nodes,
-    assets
-  }
+function isFileName(name: string): boolean {
+  return name === MAIN_FILE || /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)
 }
 
 function parseNode(id: string, value: unknown): FeatureNode | null {
@@ -100,6 +148,7 @@ function parseNode(id: string, value: unknown): FeatureNode | null {
   if (value.kind === 'star') return parseStar(base, value)
   if (value.kind === 'text') return parseText(base, value)
   if (value.kind === 'svg') return parseSvg(base, value)
+  if (value.kind === 'component') return parseComponent(base, value)
 
   if (isBooleanKind(value.kind)) {
     if (
@@ -213,6 +262,21 @@ function parseSvg(base: FeatureBaseFields, value: Record<string, unknown>): SvgN
     viewSize,
     extrusion
   }
+}
+
+function parseComponent(
+  base: FeatureBaseFields,
+  value: Record<string, unknown>
+): ComponentInstanceNode | null {
+  if (
+    typeof value.componentName !== 'string' ||
+    !/^[A-Za-z_][A-Za-z0-9_]*$/.test(value.componentName)
+  ) {
+    return null
+  }
+  const scale = value.scale === undefined ? { x: 1, y: 1, z: 1 } : parseVec(value.scale)
+  if (!scale) return null
+  return { ...base, kind: 'component', componentName: value.componentName, scale }
 }
 
 function parseExtrusion(value: unknown): Extrusion | null {

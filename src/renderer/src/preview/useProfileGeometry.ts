@@ -6,9 +6,14 @@ import { buildProfileMesh } from './manifoldPreview'
 import { prepareContours } from './prepareContours'
 
 export function useProfileGeometry(node: FeatureNode, segments: number): BufferGeometry | null {
-  const assetKey = useEditor((state) =>
-    isSvgNode(node) ? checksum(state.document.assets[node.assetId]?.source ?? '') : ''
-  )
+  const assetKey = useEditor((state) => {
+    if (!isSvgNode(node)) return ''
+    for (const file of Object.values(state.document.files)) {
+      const asset = file.assets[node.assetId]
+      if (asset) return checksum(asset.source)
+    }
+    return ''
+  })
   const key = isProfileNode(node) ? `${profileKey(node)}:${segments}:${assetKey}` : ''
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null)
 

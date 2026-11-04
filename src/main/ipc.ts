@@ -3,8 +3,10 @@ import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import {
   IpcChannel,
+  isProjectScadPath,
   isSaveProjectRequest,
   isScadAssetList,
+  isScadFileList,
   type FileResult,
   type OpenProjectResult,
   type SvgFile
@@ -24,17 +26,23 @@ import { readRecentProjects, rememberProject } from './recents'
 export function registerIpc(): void {
   ipcMain.handle(IpcChannel.openscadDetect, () => detectOpenscad())
 
-  ipcMain.handle(IpcChannel.previewStl, (_event, source: unknown, assets: unknown) => {
-    if (typeof source !== 'string') return { ok: false, message: 'Fonte inválida.' }
-    if (!isScadAssetList(assets)) return { ok: false, message: 'Arquivos SVG inválidos.' }
-    return renderStl(source, assets)
-  })
+  ipcMain.handle(
+    IpcChannel.previewStl,
+    (_event, entry: unknown, files: unknown, assets: unknown) => {
+      if (typeof entry !== 'string' || !isProjectScadPath(entry)) {
+        return { ok: false, message: 'Fonte inválida.' }
+      }
+      if (!isScadFileList(files)) return { ok: false, message: 'Fonte inválida.' }
+      if (!isScadAssetList(assets)) return { ok: false, message: 'Arquivos SVG inválidos.' }
+      return renderStl(entry, files, assets)
+    }
+  )
 
   ipcMain.handle(IpcChannel.saveProject, async (_event, request: unknown): Promise<FileResult> => {
     if (!isSaveProjectRequest(request)) return failed('Conteúdo inválido.')
     try {
       if (request.filePath && (await projectExists(request.filePath))) {
-        await updateProjectFiles(request.filePath, request.contents, request.source, request.assets)
+        await updateProjectFiles(request.filePath, request.contents, request.files, request.assets)
         await rememberProject(request.filePath)
         return { filePath: request.filePath, message: '', isProject: true }
       }
@@ -49,7 +57,7 @@ export function registerIpc(): void {
         location.directory,
         location.stem,
         request.contents,
-        request.source,
+        request.files,
         request.assets
       )
       await rememberProject(jsonPath)
@@ -85,13 +93,12 @@ export function registerIpc(): void {
 
   ipcMain.handle(
     IpcChannel.exportScad,
-    async (_event, jsonPath: unknown, source: unknown, assets: unknown): Promise<FileResult> => {
-      if (typeof jsonPath !== 'string' || typeof source !== 'string')
-        return failed('Fonte inválida.')
+    async (_event, jsonPath: unknown, files: unknown, assets: unknown): Promise<FileResult> => {
+      if (typeof jsonPath !== 'string' || !isScadFileList(files)) return failed('Fonte inválida.')
       if (!isScadAssetList(assets)) return failed('Arquivos SVG inválidos.')
       if (!(await projectExists(jsonPath))) return failed('Salve o projeto antes de exportar.')
       try {
-        const filePath = await writeProjectScad(jsonPath, source, assets)
+        const filePath = await writeProjectScad(jsonPath, files, assets)
         return { filePath, message: '', isProject: true }
       } catch (error) {
         return failed(
@@ -103,12 +110,11 @@ export function registerIpc(): void {
 
   ipcMain.handle(
     IpcChannel.exportStl,
-    async (_event, jsonPath: unknown, source: unknown, assets: unknown): Promise<FileResult> => {
-      if (typeof jsonPath !== 'string' || typeof source !== 'string')
-        return failed('Fonte inválida.')
+    async (_event, jsonPath: unknown, files: unknown, assets: unknown): Promise<FileResult> => {
+      if (typeof jsonPath !== 'string' || !isScadFileList(files)) return failed('Fonte inválida.')
       if (!isScadAssetList(assets)) return failed('Arquivos SVG inválidos.')
       if (!(await projectExists(jsonPath))) return failed('Salve o projeto antes de exportar.')
-      const rendered = await renderStl(source, assets)
+      const rendered = await renderStl('main.scad', files, assets)
       if (!rendered.ok || !rendered.stl) return failed(rendered.message)
       try {
         const filePath = await writeProjectStl(jsonPath, rendered.stl)

@@ -4,7 +4,7 @@ import Module, {
   type Vec2 as ManifoldVec2
 } from 'manifold-3d'
 import wasmUrl from 'manifold-3d/manifold.wasm?url'
-import { maxEdgeRadius } from '../document/math'
+import { isNearlyOne, maxEdgeRadius } from '../document/math'
 import {
   type BooleanKind,
   type Extrusion,
@@ -14,6 +14,7 @@ import {
   type Transform,
   type Vec3,
   isBooleanNode,
+  isComponentNode,
   isCuboidNode,
   isCylinderNode,
   isProfileNode,
@@ -43,12 +44,13 @@ export async function buildBooleanMesh(
   document: ProjectDocument,
   nodeId: string,
   roundEdges = true,
-  contours: Record<string, ContourSet> = {}
+  contours: Record<string, ContourSet> = {},
+  fileName = document.activeFile
 ): Promise<SolidMeshData | null> {
-  const node = document.nodes[nodeId]
+  const node = document.files[fileName]?.nodes[nodeId]
   if (!node || !isBooleanNode(node)) return null
   const api = await getManifold()
-  const solid = buildSolid(api, document, node, roundEdges, contours)
+  const solid = buildSolid(api, document, node, roundEdges, contours, fileName, [])
   if (!solid) return null
   try {
     return readMesh(solid)
@@ -57,22 +59,49 @@ export async function buildBooleanMesh(
   }
 }
 
-export function subtreeKey(document: ProjectDocument, node: FeatureNode): string {
-  return JSON.stringify(serializeNode(document, node))
+export function subtreeKey(
+  document: ProjectDocument,
+  node: FeatureNode,
+  fileName = document.activeFile
+): string {
+  return JSON.stringify(serializeNode(document, node, fileName, []))
 }
 
-function serializeNode(document: ProjectDocument, node: FeatureNode): unknown {
+function serializeNode(
+  document: ProjectDocument,
+  node: FeatureNode,
+  fileName: string,
+  stack: string[]
+): unknown {
   if (!node.visible) return null
   const transform = node.transform
+  if (isComponentNode(node)) {
+    if (stack.includes(node.componentName)) return { kind: 'component', cycle: true }
+    const file = document.files[node.componentName]
+    return {
+      kind: 'component',
+      componentName: node.componentName,
+      scale: node.scale,
+      transform,
+      roots: file
+        ? Object.values(file.nodes)
+            .filter((child) => child.consumedBy === null)
+            .map((child) =>
+              serializeNode(document, child, node.componentName, [...stack, node.componentName])
+            )
+        : []
+    }
+  }
   if (isBooleanNode(node)) {
+    const nodes = document.files[fileName]?.nodes ?? {}
     return {
       kind: node.kind,
       transform,
       rounding: node.rounding,
       fn: document.fn,
       children: node.childIds.map((id) => {
-        const child = document.nodes[id]
-        return child ? serializeNode(document, child) : null
+        const child = nodes[id]
+        return child ? serializeNode(document, child, fileName, stack) : null
       })
     }
   }
@@ -95,16 +124,17 @@ function serializeNode(document: ProjectDocument, node: FeatureNode): unknown {
       fn: document.fn
     }
   }
-  if (isProfileNode(node)) return serializeProfile(document, node, transform)
-  return { kind: node.kind, transform, diameter: node.diameter, fn: document.fn }
+  if (isProfileNode(node)) return serializeProfile(document, node, transform, fileName)
+  return { kind: 'sphere', transform, diameter: node.diameter, fn: document.fn }
 }
 
 function serializeProfile(
   document: ProjectDocument,
   node: ProfileNode,
-  transform: Transform
+  transform: Transform,
+  fileName: string
 ): unknown {
-  const asset = isSvgNode(node) ? document.assets[node.assetId] : undefined
+  const asset = isSvgNode(node) ? document.files[fileName]?.assets[node.assetId] : undefined
   return {
     kind: node.kind,
     transform,
@@ -127,10 +157,14 @@ function buildSolid(
   document: ProjectDocument,
   node: FeatureNode,
   roundEdges: boolean,
-  contours: Record<string, ContourSet>
+  contours: Record<string, ContourSet>,
+  ownerFile: string,
+  stack: string[]
 ): Manifold | null {
   if (!node.visible) return null
   const segments = Math.max(8, Math.min(128, Math.round(document.fn)))
+  if (isComponentNode(node))
+    return buildComponentSolid(api, document, node, roundEdges, contours, stack)
   if (isCuboidNode(node)) {
     return cuboidSolid(api, node.size, node.rounding, node.chamfer, segments)
   }
@@ -144,11 +178,12 @@ function buildSolid(
   }
   if (!isBooleanNode(node)) return null
 
+  const nodes = document.files[ownerFile]?.nodes ?? {}
   const parts: Manifold[] = []
   for (const childId of node.childIds) {
-    const child = document.nodes[childId]
+    const child = nodes[childId]
     if (!child?.visible) continue
-    const childSolid = buildSolid(api, document, child, roundEdges, contours)
+    const childSolid = buildSolid(api, document, child, roundEdges, contours, ownerFile, stack)
     if (!childSolid) continue
     parts.push(place(childSolid, child.transform))
   }
@@ -162,6 +197,51 @@ function buildSolid(
   }
   if (!roundEdges || node.rounding <= 0) return accumulator
   return roundSolid(api, accumulator, node.rounding)
+}
+
+function buildComponentSolid(
+  api: ManifoldToplevel,
+  document: ProjectDocument,
+  node: FeatureNode & { kind: 'component' },
+  roundEdges: boolean,
+  contours: Record<string, ContourSet>,
+  stack: string[]
+): Manifold | null {
+  if (stack.includes(node.componentName)) return null
+  const file = document.files[node.componentName]
+  if (!file) return null
+  const nextStack = [...stack, node.componentName]
+  const parts: Manifold[] = []
+  for (const root of Object.values(file.nodes)) {
+    if (root.consumedBy || !root.visible) continue
+    const solid = buildSolid(
+      api,
+      document,
+      root,
+      roundEdges,
+      contours,
+      node.componentName,
+      nextStack
+    )
+    if (!solid) continue
+    parts.push(place(solid, root.transform))
+  }
+  if (parts.length === 0) return null
+  let accumulator = parts[0]
+  for (let index = 1; index < parts.length; index += 1) {
+    const next = combine('union', accumulator, parts[index])
+    accumulator.delete()
+    parts[index].delete()
+    accumulator = next
+  }
+  return scaleSolid(accumulator, node.scale)
+}
+
+function scaleSolid(solid: Manifold, scale: Vec3): Manifold {
+  if (isNearlyOne(scale)) return solid
+  const scaled = solid.scale([Math.abs(scale.x), Math.abs(scale.y), Math.abs(scale.z)])
+  if (scaled !== solid) solid.delete()
+  return scaled
 }
 
 function place(solid: Manifold, transform: Transform): Manifold {

@@ -1,4 +1,12 @@
-import { localBounds, roundingCubeSize } from '../document/math'
+import { localBounds, roundingCubeSize, isNearlyOne } from '../document/math'
+import {
+  MAIN_FILE,
+  assetRelativePrefix,
+  componentNamesIn,
+  orderedFileNames,
+  projectEntryPath,
+  scadRelativePath
+} from '../document/files'
 import { getRoots } from '../document/tree'
 import { openscadSvgScale } from '../preview/svgMetrics'
 import {
@@ -23,6 +31,7 @@ import {
   DEFAULT_COLOR,
   isBooleanNode,
   isCircleNode,
+  isComponentNode,
   isCuboidNode,
   isCylinderNode,
   isEllipseNode,
@@ -40,15 +49,43 @@ const HEADER = [
   'include <BOSL2/std.scad>'
 ]
 
-export function generateOpenscad(document: ProjectDocument): string {
-  const lines = [...HEADER, '', `$fn = ${formatNumber(document.fn)};`, '']
-  const body = getRoots(document)
+export interface ScadSourceFile {
+  path: string
+  source: string
+}
+
+export function generateOpenscad(
+  document: ProjectDocument,
+  fileName = document.activeFile
+): string {
+  const uses = componentNamesIn(document.files[fileName]?.nodes ?? {}).map(
+    (name) => `use <${scadRelativePath(fileName, name)}>`
+  )
+  const lines = [...HEADER]
+  if (uses.length > 0) lines.push(...uses)
+  lines.push('', `$fn = ${formatNumber(document.fn)};`, '')
+  const body = getRoots(document, fileName)
     .filter((node) => node.visible)
-    .map((node) => emitFeature(document, node))
+    .map((node) => emitFeature(document, node, fileName))
     .filter((part) => part.length > 0)
-  lines.push(body.length > 0 ? body.join('\n') : '// Empty model')
-  lines.push('')
+  const content = body.length > 0 ? body.join('\n') : '// Empty model'
+  if (fileName === MAIN_FILE) {
+    lines.push(content, '')
+    return lines.join('\n')
+  }
+  lines.push(`module ${fileName}() {`, indent(content, 4), '}', '', `${fileName}();`, '')
   return lines.join('\n')
+}
+
+export function generateProjectSources(document: ProjectDocument): ScadSourceFile[] {
+  return orderedFileNames(document).map((fileName) => ({
+    path: projectEntryPath(fileName),
+    source: generateOpenscad(document, fileName)
+  }))
+}
+
+export function activeEntryPath(document: ProjectDocument): string {
+  return projectEntryPath(document.activeFile)
 }
 
 export function formatNumber(value: number): string {
@@ -57,37 +94,39 @@ export function formatNumber(value: number): string {
   return String(Object.is(rounded, -0) ? 0 : rounded)
 }
 
-function emitFeature(document: ProjectDocument, node: FeatureNode): string {
+function emitFeature(document: ProjectDocument, node: FeatureNode, fileName: string): string {
   if (!node.visible) return ''
-  const shape = emitShape(document, node)
+  const shape = emitShape(document, node, fileName)
   if (!shape) return ''
-  const rotated = emitRotate(shape, node.transform.rotation)
+  const scaled = emitScale(shape, isComponentNode(node) ? node.scale : null)
+  const rotated = emitRotate(scaled, node.transform.rotation)
   const translated = emitTranslate(rotated, node.transform.position)
   return emitColor(translated, node.appearance)
 }
 
-function emitShape(document: ProjectDocument, node: FeatureNode): string {
+function emitShape(document: ProjectDocument, node: FeatureNode, fileName: string): string {
   if (isCuboidNode(node)) return `${emitCuboid(node)};`
   if (isCylinderNode(node)) return `${emitCylinder(node)};`
   if (isSphereNode(node)) return `${emitSphere(node)};`
-  if (isProfileNode(node)) return emitExtruded(node)
-  if (isBooleanNode(node)) return emitBoolean(document, node)
+  if (isComponentNode(node)) return `${node.componentName}();`
+  if (isProfileNode(node)) return emitExtruded(node, fileName)
+  if (isBooleanNode(node)) return emitBoolean(document, node, fileName)
   return ''
 }
 
-export function emitProfile2d(node: ProfileNode): string {
+export function emitProfile2d(node: ProfileNode, fileName = MAIN_FILE): string {
   if (isRectNode(node)) return `${emitRect(node)};`
   if (isCircleNode(node)) return `${emitCircle(node)};`
   if (isEllipseNode(node)) return `${emitEllipse(node)};`
   if (isNgonNode(node)) return `${emitNgon(node)};`
   if (isStarNode(node)) return `${emitStar(node)};`
   if (isTextNode(node)) return `${emitText(node)};`
-  if (isSvgNode(node)) return emitSvg(node)
+  if (isSvgNode(node)) return emitSvg(node, fileName)
   return ''
 }
 
-function emitExtruded(node: ProfileNode): string {
-  const profile = emitProfile2d(node)
+function emitExtruded(node: ProfileNode, fileName: string): string {
+  const profile = emitProfile2d(node, fileName)
   if (!profile) return ''
   return `linear_extrude(${emitExtrusion(node.extrusion)}) {\n${indent(profile, 4)}\n}`
 }
@@ -139,9 +178,9 @@ function emitText(node: TextNode): string {
   ].join(', ')
 }
 
-function emitSvg(node: SvgNode): string {
+function emitSvg(node: SvgNode, fileName: string): string {
   const scale = openscadSvgScale(node.mmPerUnit, node.importScale)
-  const imported = `import(${emitString(`3dev-assets/${node.assetId}.svg`)}, scale=${formatNumber(scale)});`
+  const imported = `import(${emitString(`${assetRelativePrefix(fileName)}${node.assetId}.svg`)}, scale=${formatNumber(scale)});`
   const translated = `translate(${emitVec({ x: node.center.x, y: node.center.y, z: 0 })})\n${indent(imported, 4)}`
   return translated
 }
@@ -162,18 +201,24 @@ function emitSphere(node: SphereNode): string {
   return `spheroid(d=${formatNumber(node.diameter)}, anchor=CENTER)`
 }
 
-function emitBoolean(document: ProjectDocument, node: BooleanNode): string {
+function emitBoolean(document: ProjectDocument, node: BooleanNode, fileName: string): string {
+  const nodes = document.files[fileName]?.nodes ?? {}
   const parts = node.childIds
-    .map((id) => document.nodes[id])
+    .map((id) => nodes[id])
     .filter((child): child is FeatureNode => child !== undefined && child.visible)
-    .map((child) => emitFeature(document, child))
+    .map((child) => emitFeature(document, child, fileName))
     .filter((part) => part.length > 0)
   if (parts.length === 0) return ''
   const body = `${node.kind}() {\n${indent(parts.join('\n'), 4)}\n}`
   if (node.rounding <= 0) return body
-  const bounds = localBounds(document, node)
+  const bounds = localBounds(document, node, fileName)
   const size = bounds ? roundingCubeSize(bounds, node.rounding) : 1000
   return `round3d(r=${formatNumber(node.rounding)}, size=${formatNumber(size)}) {\n${indent(body, 4)}\n}`
+}
+
+function emitScale(inner: string, scale: Vec3 | null): string {
+  if (!scale || isNearlyOne(scale)) return inner
+  return `scale(${emitVec(scale)})\n${indent(inner, 4)}`
 }
 
 function emitTranslate(inner: string, position: Vec3): string {

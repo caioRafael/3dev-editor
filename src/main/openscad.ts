@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { constants, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -7,7 +7,13 @@ import { createHash } from 'node:crypto'
 import { promisify } from 'node:util'
 import { app } from 'electron'
 import { is } from '@electron-toolkit/utils'
-import type { OpenscadStatus, PreviewStlResult, ScadAsset } from '../shared/api'
+import {
+  isProjectScadPath,
+  type OpenscadStatus,
+  type PreviewStlResult,
+  type ScadAsset,
+  type ScadFile
+} from '../shared/api'
 import { writeAssets } from './projectFiles'
 
 const execFileAsync = promisify(execFile)
@@ -67,23 +73,32 @@ export async function detectOpenscad(): Promise<OpenscadStatus> {
 }
 
 export async function renderStl(
-  source: string,
+  entry: string,
+  files: ScadFile[],
   assets: ScadAsset[] = []
 ): Promise<PreviewStlResult> {
   const status = cachedCommand
     ? { available: true, command: cachedCommand, message: cachedCommand }
     : await detectOpenscad()
   if (!status.available || !status.command) return { ok: false, message: status.message }
+  if (!isProjectScadPath(entry) || !files.some((file) => file.path === entry)) {
+    return { ok: false, message: 'Arquivo OpenSCAD inválido.' }
+  }
 
-  const hash = hashSource(source, assets)
+  const hash = hashSource(entry, files, assets)
   const cached = previewCache.get(hash)
   if (cached) return { ok: true, message: '', stl: cached }
 
   const directory = await mkdtemp(join(tmpdir(), '3dev-'))
-  const scadPath = join(directory, 'model.scad')
+  const scadPath = join(directory, entry)
   const stlPath = join(directory, 'model.stl')
   try {
-    await writeFile(scadPath, source, 'utf8')
+    for (const file of files) {
+      if (!isProjectScadPath(file.path)) continue
+      const target = join(directory, file.path)
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, file.source, 'utf8')
+    }
     await writeAssets(directory, assets)
     await execFileAsync(status.command, ['-o', stlPath, scadPath], {
       env: { ...process.env, OPENSCADPATH: openscadLibraryPath() },
@@ -105,9 +120,13 @@ export async function renderStl(
   }
 }
 
-function hashSource(source: string, assets: ScadAsset[]): string {
+function hashSource(entry: string, files: ScadFile[], assets: ScadAsset[]): string {
   const hash = createHash('sha256')
-  hash.update(source)
+  hash.update(entry)
+  for (const file of [...files].sort((left, right) => left.path.localeCompare(right.path))) {
+    hash.update(file.path)
+    hash.update(file.source)
+  }
   for (const asset of [...assets].sort((left, right) => left.id.localeCompare(right.id))) {
     hash.update(asset.id)
     hash.update(asset.source)

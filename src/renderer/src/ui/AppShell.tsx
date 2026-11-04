@@ -48,7 +48,7 @@ export function AppShell(): React.JSX.Element {
 
   return (
     <div className="flex h-full w-full flex-col bg-[#14161b] text-[#e7e9ee]">
-      <MenuBar source={source} onNew={() => setWelcomeOpen(true)} />
+      <MenuBar onNew={() => setWelcomeOpen(true)} />
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-64 shrink-0 flex-col border-r border-[#2c3240] bg-[#1b1e27]">
           <Outliner />
@@ -57,7 +57,7 @@ export function AppShell(): React.JSX.Element {
         <div className="flex min-w-0 flex-1 flex-col">
           <Toolbar />
           <div className="relative min-h-0 flex-1">
-            <Viewport source={source} />
+            <Viewport />
           </div>
           <CodePanel source={source} />
         </div>

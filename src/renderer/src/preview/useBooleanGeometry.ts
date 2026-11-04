@@ -6,10 +6,11 @@ import { prepareContours } from './prepareContours'
 import { useEditor } from '../document/store'
 import { type ProjectDocument, isBooleanNode } from '../document/types'
 
-export function useBooleanGeometry(nodeId: string): BufferGeometry | null {
+export function useBooleanGeometry(nodeId: string, fileName?: string): BufferGeometry | null {
   const document = useEditor((state) => state.document)
-  const node = document.nodes[nodeId]
-  const key = node && isBooleanNode(node) ? subtreeKey(document, node) : ''
+  const owner = fileName ?? document.activeFile
+  const node = document.files[owner]?.nodes[nodeId]
+  const key = node && isBooleanNode(node) ? subtreeKey(document, node, owner) : ''
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null)
 
   useEffect(() => {
@@ -17,7 +18,7 @@ export function useBooleanGeometry(nodeId: string): BufferGeometry | null {
     let cancelled = false
     let stage: 'base' | 'rounded' = 'base'
     const current = useEditor.getState().document
-    const roundEdges = needsEdgeRounding(current, nodeId)
+    const roundEdges = needsEdgeRounding(current, nodeId, owner)
     const show = (data: SolidMeshData | null, rounded: boolean): void => {
       if (cancelled || !data || data.positions.length === 0) return
       if (!rounded && stage === 'rounded') return
@@ -32,7 +33,7 @@ export function useBooleanGeometry(nodeId: string): BufferGeometry | null {
     void prepareContours(current)
       .then((contours) => {
         if (cancelled) return null
-        return buildBooleanMesh(current, nodeId, false, contours).then((data) => {
+        return buildBooleanMesh(current, nodeId, false, contours, owner).then((data) => {
           show(data, false)
           return contours
         })
@@ -59,7 +60,7 @@ export function useBooleanGeometry(nodeId: string): BufferGeometry | null {
     const timeout = window.setTimeout(() => {
       const latest = useEditor.getState().document
       void prepareContours(latest)
-        .then((contours) => requestBooleanMesh(latest, nodeId, contours))
+        .then((contours) => requestBooleanMesh(latest, nodeId, contours, owner))
         .then((data) => {
           if (cancelled) return
           if (!data || data.positions.length === 0) {
@@ -83,7 +84,7 @@ export function useBooleanGeometry(nodeId: string): BufferGeometry | null {
       window.clearTimeout(timeout)
       finishPreview()
     }
-  }, [key, nodeId])
+  }, [key, nodeId, owner])
 
   useEffect(() => {
     return () => {
@@ -97,11 +98,11 @@ export function useBooleanGeometry(nodeId: string): BufferGeometry | null {
   return geometry
 }
 
-function needsEdgeRounding(document: ProjectDocument, nodeId: string): boolean {
-  const node = document.nodes[nodeId]
+function needsEdgeRounding(document: ProjectDocument, nodeId: string, fileName: string): boolean {
+  const node = document.files[fileName]?.nodes[nodeId]
   if (!node || !isBooleanNode(node)) return false
   if (node.rounding > 0) return true
-  return node.childIds.some((id) => needsEdgeRounding(document, id))
+  return node.childIds.some((id) => needsEdgeRounding(document, id, fileName))
 }
 
 function meshGeometry(data: SolidMeshData): BufferGeometry {

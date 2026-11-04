@@ -1,4 +1,4 @@
-import { generateOpenscad } from '../codegen/openscad'
+import { generateProjectSources } from '../codegen/openscad'
 import { parseProjectDocument } from '../document/parse'
 import { useEditor } from '../document/store'
 import { createEmptyDocument, referencedSvgAssets } from '../document/tree'
@@ -19,7 +19,7 @@ export async function createProject(): Promise<ActionResult> {
       filePath: null,
       documentName: document.name,
       contents: JSON.stringify(document, null, 2),
-      source: generateOpenscad(document),
+      files: generateProjectSources(document),
       assets: []
     })
     if (!result.filePath) return { ok: false, message: result.message }
@@ -57,7 +57,7 @@ export async function openRecentProjectFile(jsonPath: string): Promise<ActionRes
   }
 }
 
-export async function saveCurrentProject(source: string): Promise<ActionResult> {
+export async function saveCurrentProject(): Promise<ActionResult> {
   const api = requireApi()
   if (!api) return unavailable()
   const { document, filePath, isProject } = useEditor.getState()
@@ -66,7 +66,7 @@ export async function saveCurrentProject(source: string): Promise<ActionResult> 
       filePath: isProject ? filePath : null,
       documentName: document.name,
       contents: JSON.stringify(document, null, 2),
-      source,
+      files: generateProjectSources(document),
       assets: referencedSvgAssets(document)
     })
     return applySaved(result, 'Modelo salvo.')
@@ -75,8 +75,8 @@ export async function saveCurrentProject(source: string): Promise<ActionResult> 
   }
 }
 
-export async function exportCurrentScad(source: string): Promise<void> {
-  const ready = await ensureProject(source)
+export async function exportCurrentScad(): Promise<void> {
+  const ready = await ensureProject()
   if (!ready.ok) {
     if (ready.message) useEditor.getState().setStatus(ready.message)
     return
@@ -86,15 +86,19 @@ export async function exportCurrentScad(source: string): Promise<void> {
   if (!api || !filePath) return
   const assets = referencedSvgAssets(useEditor.getState().document)
   try {
-    const result = await api.exportScad(filePath, source, assets)
+    const result = await api.exportScad(
+      filePath,
+      generateProjectSources(useEditor.getState().document),
+      assets
+    )
     applyExport(result, 'OpenSCAD exportado.')
   } catch {
     useEditor.getState().setStatus('Não foi possível exportar o OpenSCAD.')
   }
 }
 
-export async function exportCurrentStl(source: string): Promise<void> {
-  const ready = await ensureProject(source)
+export async function exportCurrentStl(): Promise<void> {
+  const ready = await ensureProject()
   if (!ready.ok) {
     if (ready.message) useEditor.getState().setStatus(ready.message)
     return
@@ -105,17 +109,21 @@ export async function exportCurrentStl(source: string): Promise<void> {
   useEditor.getState().setStatus('Exportando STL...')
   const assets = referencedSvgAssets(useEditor.getState().document)
   try {
-    const result = await api.exportStl(filePath, source, assets)
+    const result = await api.exportStl(
+      filePath,
+      generateProjectSources(useEditor.getState().document),
+      assets
+    )
     applyExport(result, 'STL exportado.')
   } catch {
     useEditor.getState().setStatus('Não foi possível exportar o STL.')
   }
 }
 
-async function ensureProject(source: string): Promise<ActionResult> {
+async function ensureProject(): Promise<ActionResult> {
   const { filePath, isProject } = useEditor.getState()
   if (filePath && isProject) return { ok: true, message: '' }
-  return saveCurrentProject(source)
+  return saveCurrentProject()
 }
 
 function applySaved(result: FileResult, success: string): ActionResult {

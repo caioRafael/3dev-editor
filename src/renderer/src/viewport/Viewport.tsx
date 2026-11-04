@@ -1,7 +1,9 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { Grid, OrbitControls } from '@react-three/drei'
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { MOUSE, type Group } from 'three'
+import { ContextMenu } from '../ui/ContextMenu'
 import { useEditor } from '../document/store'
 import { getRoots } from '../document/tree'
 import { ExactPreview } from './ExactPreview'
@@ -23,10 +25,12 @@ function PreviewActivity(): React.JSX.Element | null {
   )
 }
 
-export function Viewport({ source }: { source: string }): React.JSX.Element {
+export function Viewport(): React.JSX.Element {
   const document = useEditor((state) => state.document)
   const roots = getRoots(document)
   const refs = useRef(new Map<string, Group>())
+  const controlsRef = useRef<OrbitControlsImpl>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [version, setVersion] = useState(0)
   const register = useCallback((id: string, group: Group | null) => {
     if (group) refs.current.set(id, group)
@@ -39,8 +43,21 @@ export function Viewport({ source }: { source: string }): React.JSX.Element {
   )
 
   return (
-    <div className="absolute inset-0" onContextMenu={(event) => event.preventDefault()}>
+    <div
+      className="absolute inset-0"
+      onPointerDownCapture={(event) => {
+        const controls = controlsRef.current
+        if (!controls || event.button !== 2) return
+        controls.mouseButtons.RIGHT = event.altKey ? MOUSE.ROTATE : (-1 as MOUSE)
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        if (event.altKey) return
+        setMenu({ x: event.clientX, y: event.clientY })
+      }}
+    >
       <PreviewActivity />
+      {menu ? <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} /> : null}
       <ViewportInteractionContext.Provider value={interaction}>
         <Canvas
           camera={{ fov: 40, near: 0.1, far: 8000, position: [90, -140, 80], up: [0, 0, 1] }}
@@ -72,6 +89,7 @@ export function Viewport({ source }: { source: string }): React.JSX.Element {
           />
           <axesHelper args={[28]} />
           <OrbitControls
+            ref={controlsRef}
             makeDefault
             target={[0, 0, 0]}
             enableDamping
@@ -79,14 +97,14 @@ export function Viewport({ source }: { source: string }): React.JSX.Element {
             mouseButtons={{
               LEFT: -1 as MOUSE,
               MIDDLE: MOUSE.PAN,
-              RIGHT: MOUSE.ROTATE
+              RIGHT: -1 as MOUSE
             }}
           />
           {roots.map((node) => (
             <FeatureView key={node.id} id={node.id} />
           ))}
           <SelectionGizmo />
-          <ExactPreview source={source} />
+          <ExactPreview />
         </Canvas>
       </ViewportInteractionContext.Provider>
     </div>

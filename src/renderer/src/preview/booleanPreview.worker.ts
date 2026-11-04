@@ -7,6 +7,7 @@ interface BooleanJob {
   id: number
   document: ProjectDocument
   nodeId: string
+  fileName: string
   contours: Record<string, ContourSet>
 }
 
@@ -21,18 +22,19 @@ self.onmessage = (event: MessageEvent<unknown>) => {
   if (!isRecord(event.data) || typeof event.data.id !== 'number') return
   const id = event.data.id
   const nodeId = event.data.nodeId
+  const fileName = event.data.fileName
   const document = parseProjectDocument(event.data.document)
   const contours = readContours(event.data.contours)
-  if (typeof nodeId !== 'string' || !document) {
+  if (typeof nodeId !== 'string' || typeof fileName !== 'string' || !document) {
     reply({ id, positions: null, indices: null, error: 'Falha na prévia booleana.' })
     return
   }
-  void run({ id, document, nodeId, contours })
+  void run({ id, document, nodeId, fileName, contours })
 }
 
 async function run(job: BooleanJob): Promise<void> {
   try {
-    const mesh = await buildBooleanMesh(job.document, job.nodeId, true, job.contours)
+    const mesh = await buildBooleanMesh(job.document, job.nodeId, true, job.contours, job.fileName)
     const positions = mesh?.positions ?? null
     const indices = mesh?.indices ?? null
     const transfer: Transferable[] = []

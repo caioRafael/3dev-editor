@@ -1,6 +1,7 @@
-import { mkdir, readdir, realpath, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative } from 'node:path'
-import type { ProjectEntry, ProjectTree, ScadAsset } from '../shared/api'
+import type { ProjectEntry, ProjectTree, ScadAsset, ScadFile } from '../shared/api'
+import { isProjectScadPath } from '../shared/api'
 import {
   CODE_DIRECTORY,
   OUTPUT_DIRECTORY,
@@ -26,7 +27,7 @@ export async function createProjectFiles(
   directory: string,
   stem: string,
   contents: string,
-  source: string,
+  files: ScadFile[],
   assets: ScadAsset[]
 ): Promise<string> {
   const existing = await stat(directory).catch(() => null)
@@ -35,7 +36,7 @@ export async function createProjectFiles(
   await mkdir(paths.codeDirectory, { recursive: true })
   await mkdir(paths.outputDirectory, { recursive: true })
   await writeFile(paths.jsonPath, contents, 'utf8')
-  await writeFile(paths.scadPath, source, 'utf8')
+  await writeScadFiles(paths.codeDirectory, paths.stem, files)
   await writeAssets(paths.codeDirectory, assets)
   return paths.jsonPath
 }
@@ -43,27 +44,51 @@ export async function createProjectFiles(
 export async function updateProjectFiles(
   jsonPath: string,
   contents: string,
-  source: string,
+  files: ScadFile[],
   assets: ScadAsset[]
 ): Promise<void> {
   const paths = projectPaths(dirname(jsonPath), stemFromJsonPath(jsonPath))
   await mkdir(paths.codeDirectory, { recursive: true })
   await mkdir(paths.outputDirectory, { recursive: true })
   await writeFile(jsonPath, contents, 'utf8')
-  await writeFile(paths.scadPath, source, 'utf8')
+  await writeScadFiles(paths.codeDirectory, paths.stem, files)
   await writeAssets(paths.codeDirectory, assets)
 }
 
 export async function writeProjectScad(
   jsonPath: string,
-  source: string,
+  files: ScadFile[],
   assets: ScadAsset[]
 ): Promise<string> {
   const paths = projectPaths(dirname(jsonPath), stemFromJsonPath(jsonPath))
   await mkdir(paths.codeDirectory, { recursive: true })
-  await writeFile(paths.scadPath, source, 'utf8')
+  await writeScadFiles(paths.codeDirectory, paths.stem, files)
   await writeAssets(paths.codeDirectory, assets)
   return paths.scadPath
+}
+
+async function writeScadFiles(
+  codeDirectory: string,
+  stem: string,
+  files: ScadFile[]
+): Promise<void> {
+  const componentsDirectory = join(codeDirectory, 'components')
+  await mkdir(componentsDirectory, { recursive: true })
+  const expected = new Set<string>()
+  for (const file of files) {
+    if (!isProjectScadPath(file.path)) continue
+    expected.add(file.path)
+    const target = join(codeDirectory, file.path)
+    await mkdir(dirname(target), { recursive: true })
+    await writeFile(target, file.source, 'utf8')
+  }
+  const existing = await readdir(componentsDirectory).catch(() => [] as string[])
+  for (const name of existing) {
+    if (!name.endsWith('.scad')) continue
+    if (expected.has(`components/${name}`)) continue
+    await rm(join(componentsDirectory, name), { force: true })
+  }
+  if (stem !== 'main') await rm(join(codeDirectory, `${stem}.scad`), { force: true })
 }
 
 export async function writeProjectStl(jsonPath: string, stl: Uint8Array): Promise<string> {

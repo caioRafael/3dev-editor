@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react'
+import { componentNames, MAIN_FILE } from '../document/files'
 import { useEditor } from '../document/store'
 import type { ProjectEntry, ProjectTree } from '../../../shared/api'
+import { ComponentNameModal } from './ComponentNameModal'
 import { readEditorApi } from './editorApi'
 
 export function FileTree(): React.JSX.Element {
   const filePath = useEditor((state) => state.filePath)
   const filesNonce = useEditor((state) => state.filesNonce)
+  const document = useEditor((state) => state.document)
+  const components = componentNames(document)
   const [loaded, setLoaded] = useState<{ path: string; tree: ProjectTree | null } | null>(null)
   const [selection, setSelection] = useState<{ path: string; key: string } | null>(null)
+  const [naming, setNaming] = useState(false)
   const tree = loaded?.path === filePath ? loaded.tree : null
   const selectionPath = filePath ?? ''
   const selected = selection?.path === selectionPath ? selection.key : null
@@ -30,14 +35,26 @@ export function FileTree(): React.JSX.Element {
     setSelection({ path: selectionPath, key })
   }
 
+  function openCodeFile(fileName: string): void {
+    choose(fileName === MAIN_FILE ? 'code/main.scad' : `code/components/${fileName}.scad`)
+    useEditor.getState().openFile(fileName)
+  }
+
   const rootName = tree?.rootName ?? (filePath ? folderName(filePath) : 'Sem projeto')
   const jsonName = tree?.jsonName ?? (filePath ? baseName(filePath) : null)
   const message = hint(phase, tree?.isProject === true)
 
   return (
     <section className="flex min-h-0 flex-1 flex-col border-t border-[#2c3240]">
-      <header className="border-b border-[#2c3240] px-3 py-2 text-[12px] tracking-wide text-[#9aa3b2] uppercase">
-        Arquivos
+      <header className="flex items-center justify-between border-b border-[#2c3240] px-3 py-2">
+        <span className="text-[12px] tracking-wide text-[#9aa3b2] uppercase">Arquivos</span>
+        <button
+          type="button"
+          className="rounded-md px-1.5 py-0.5 text-[11px] text-[#e7e9ee] hover:bg-[#2a3040]"
+          onClick={() => setNaming(true)}
+        >
+          Novo componente
+        </button>
       </header>
       <div className="min-h-0 flex-1 overflow-auto p-2">
         <p className="truncate px-2 py-1 text-[12px] font-medium text-[#e7e9ee]">{rootName}</p>
@@ -55,8 +72,31 @@ export function FileTree(): React.JSX.Element {
           selected={selected === 'code'}
           onClick={() => choose('code')}
         />
+        <TreeButton
+          label="main.scad"
+          depth={2}
+          selected={document.activeFile === MAIN_FILE}
+          onClick={() => openCodeFile(MAIN_FILE)}
+        />
+        <TreeButton
+          label="components"
+          depth={2}
+          selected={selected === 'code/components'}
+          onClick={() => choose('code/components')}
+        />
+        {components.map((name) => (
+          <TreeButton
+            key={name}
+            label={`${name}.scad`}
+            depth={3}
+            selected={document.activeFile === name}
+            onClick={() => openCodeFile(name)}
+          />
+        ))}
         <EntryList
-          entries={tree?.code ?? []}
+          entries={(tree?.code ?? []).filter(
+            (entry) => entry.name !== 'main.scad' && entry.name !== 'components'
+          )}
           prefix="code"
           depth={2}
           selected={selected}
@@ -83,6 +123,7 @@ export function FileTree(): React.JSX.Element {
         )}
         {message ? <p className="px-2 py-2 text-[12px] text-[#8b93a3]">{message}</p> : null}
       </div>
+      {naming ? <ComponentNameModal onClose={() => setNaming(false)} /> : null}
     </section>
   )
 }

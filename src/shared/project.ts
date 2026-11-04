@@ -3,6 +3,8 @@ import type { RecentProject } from './api'
 
 export const CODE_DIRECTORY = 'code'
 export const OUTPUT_DIRECTORY = 'output'
+export const COMPONENTS_DIRECTORY = 'components'
+export const MAIN_SCAD_FILE = 'main.scad'
 export const RECENT_PROJECT_LIMIT = 8
 
 export interface ProjectPaths {
@@ -11,6 +13,7 @@ export interface ProjectPaths {
   jsonPath: string
   codeDirectory: string
   scadPath: string
+  componentsDirectory: string
   outputDirectory: string
   stlPath: string
 }
@@ -48,7 +51,8 @@ export function projectPaths(directory: string, stem: string): ProjectPaths {
     stem: safeStem,
     jsonPath: join(directory, `${safeStem}.3dev.json`),
     codeDirectory: join(directory, CODE_DIRECTORY),
-    scadPath: join(directory, CODE_DIRECTORY, `${safeStem}.scad`),
+    scadPath: join(directory, CODE_DIRECTORY, MAIN_SCAD_FILE),
+    componentsDirectory: join(directory, CODE_DIRECTORY, COMPONENTS_DIRECTORY),
     outputDirectory: join(directory, OUTPUT_DIRECTORY),
     stlPath: join(directory, OUTPUT_DIRECTORY, `${safeStem}.stl`)
   }

@@ -1,4 +1,5 @@
 import { booleanRadiusLimit, localBounds, round3, roundVec } from '../document/math'
+import { MAIN_FILE, activeModel, introducesCycle, replaceActive } from '../document/files'
 import { getRoots, pruneAssets } from '../document/tree'
 import { importScaleFromOpenscad, readSvgMetrics, roundVec2 } from '../preview/svgMetrics'
 import {
@@ -6,6 +7,7 @@ import {
   type BooleanKind,
   type BooleanNode,
   type CircleNode,
+  type ComponentInstanceNode,
   type CuboidNode,
   type CylinderNode,
   type EllipseNode,
@@ -29,6 +31,7 @@ import {
   identityTransform,
   isBooleanNode,
   isCircleNode,
+  isComponentNode,
   isCuboidNode,
   isCylinderNode,
   isEllipseNode,
@@ -54,13 +57,14 @@ const LABELS: Record<ParsedNode['kind'], string> = {
   ngon: 'Polígono',
   star: 'Estrela',
   text: 'Texto',
-  svg: 'SVG'
+  svg: 'SVG',
+  component: 'Componente'
 }
 
 const ASSET_PATH =
-  /^3dev-assets\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.svg$/i
+  /^(?:\.\.\/)?3dev-assets\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.svg$/i
 
-const MODIFIER_ORDER = ['color', 'translate', 'rotate']
+const MODIFIER_ORDER = ['color', 'translate', 'rotate', 'scale']
 
 export interface OpenscadParseSuccess {
   ok: true
@@ -117,6 +121,12 @@ interface ParsedBoolean extends ParsedBase {
   kind: BooleanKind
   children: ParsedNode[]
   rounding: number
+}
+
+interface ParsedComponent extends ParsedBase {
+  kind: 'component'
+  componentName: string
+  scale: Vec3
 }
 
 interface ParsedRect extends ParsedBase {
@@ -176,7 +186,8 @@ interface ParsedSvg extends ParsedBase {
 type ParsedProfile =
   ParsedRect | ParsedCircle | ParsedEllipse | ParsedNgon | ParsedStar | ParsedText | ParsedSvg
 
-type ParsedNode = ParsedCuboid | ParsedCylinder | ParsedSphere | ParsedBoolean | ParsedProfile
+type ParsedNode =
+  ParsedCuboid | ParsedCylinder | ParsedSphere | ParsedBoolean | ParsedProfile | ParsedComponent
 
 interface ColorModifier {
   kind: 'color'
@@ -200,7 +211,14 @@ interface RotateModifier {
   column: number
 }
 
-type Modifier = ColorModifier | TranslateModifier | RotateModifier
+interface ScaleModifier {
+  kind: 'scale'
+  scale: Vec3
+  line: number
+  column: number
+}
+
+type Modifier = ColorModifier | TranslateModifier | RotateModifier | ScaleModifier
 
 interface NumberValue {
   type: 'number'
@@ -265,42 +283,141 @@ function parseSource(source: string, previous: ProjectDocument): ProjectDocument
   const parser: Parser = { tokens: tokenize(source), index: 0 }
   let fn = previous.fn
   let sawFn = false
-  const statements: ParsedNode[] = []
-  while (!isEof(parser)) {
-    if (isIdent(parser, 'include') || isIdent(parser, 'use')) {
+  const uses: string[] = []
+  const fileName = previous.activeFile
+  const readPrelude = (): boolean => {
+    if (isIdent(parser, 'include')) {
       parseInclude(parser)
-      continue
+      return true
+    }
+    if (isIdent(parser, 'use')) {
+      const name = parseUse(parser, previous, fileName)
+      if (uses.includes(name)) fail(parser, `use de ${name} repetido.`)
+      uses.push(name)
+      return true
     }
     if (isIdent(parser, '$fn')) {
       if (sawFn) fail(parser, '$fn repetido.')
       fn = parseFn(parser)
       sawFn = true
-      continue
+      return true
     }
-    statements.push(parseStatement(parser))
+    return false
   }
-  return reconcile(previous, statements, fn)
+  while (readPrelude()) {
+    // Header statements stay outside the module body.
+  }
+  const statements =
+    fileName === MAIN_FILE
+      ? parseMainStatements(parser, previous, readPrelude)
+      : parseComponentModule(parser, previous, fileName)
+  while (readPrelude()) {
+    // A trailing $fn is still the file resolution.
+  }
+  if (!isEof(parser)) fail(parser, 'Código extra depois do modelo.')
+  const instantiated = instantiatedComponents(statements)
+  for (const name of uses) {
+    if (!instantiated.has(name)) {
+      throw new ParseFailure(`use de ${name} não é usado.`, 1, 1)
+    }
+  }
+  for (const name of instantiated) {
+    if (!uses.includes(name)) throw new ParseFailure(`Falta use de ${name}.`, 1, 1)
+  }
+  const document = reconcile(previous, statements, fn)
+  for (const name of instantiated) {
+    if (introducesCycle(document, fileName, name)) {
+      throw new ParseFailure('Esse componente criaria um ciclo.', 1, 1)
+    }
+  }
+  return document
 }
 
-function parseStatement(parser: Parser): ParsedNode {
+function parseMainStatements(
+  parser: Parser,
+  previous: ProjectDocument,
+  readPrelude: () => boolean
+): ParsedNode[] {
+  const statements: ParsedNode[] = []
+  while (!isEof(parser)) {
+    if (readPrelude()) continue
+    statements.push(parseStatement(parser, previous))
+  }
+  return statements
+}
+
+function parseComponentModule(
+  parser: Parser,
+  previous: ProjectDocument,
+  fileName: string
+): ParsedNode[] {
+  expectIdent(parser, 'module')
+  expectIdent(parser, fileName)
+  expectPunct(parser, '(')
+  expectPunct(parser, ')')
+  expectPunct(parser, '{')
+  const statements: ParsedNode[] = []
+  while (!isPunct(parser, '}') && !isEof(parser)) {
+    if (isIdent(parser, 'include') || isIdent(parser, 'use') || isIdent(parser, '$fn')) {
+      fail(parser, 'include, use e $fn ficam fora do módulo.')
+    }
+    statements.push(parseStatement(parser, previous))
+  }
+  expectPunct(parser, '}')
+  expectIdent(parser, fileName)
+  expectPunct(parser, '(')
+  expectPunct(parser, ')')
+  expectPunct(parser, ';')
+  return statements
+}
+
+function parseStatement(parser: Parser, previous: ProjectDocument): ParsedNode {
   const modifiers: Modifier[] = []
   while (isModifier(parser)) modifiers.push(parseModifier(parser))
   validateModifierOrder(modifiers)
-  return applyModifiers(parseShape(parser), modifiers)
+  return applyModifiers(parseShape(parser, previous), modifiers)
 }
 
-function parseShape(parser: Parser): ParsedNode {
+function parseShape(parser: Parser, previous: ProjectDocument): ParsedNode {
   const token = peek(parser)
   if (token.kind !== 'ident') fail(parser, `Construção não suportada: ${describe(token)}.`)
-  if (token.value === 'round3d') return parseRound3d(parser)
+  if (token.value === 'round3d') return parseRound3d(parser, previous)
   if (token.value === 'linear_extrude') return parseExtrusion(parser)
   if (token.value === 'cuboid') return parseCuboid(parser)
   if (token.value === 'cyl') return parseCylinder(parser)
   if (token.value === 'spheroid') return parseSphere(parser)
   if (token.value === 'union' || token.value === 'difference' || token.value === 'intersection') {
-    return parseBoolean(parser, token.value)
+    return parseBoolean(parser, token.value, previous)
+  }
+  if (token.value !== MAIN_FILE && previous.files[token.value]) {
+    return parseComponentCall(parser, token.value)
   }
   throw new ParseFailure(`Construção não suportada: ${token.value}.`, token.line, token.column)
+}
+
+function parseComponentCall(parser: Parser, name: string): ParsedComponent {
+  const token = expectIdent(parser, name)
+  expectPunct(parser, '(')
+  expectPunct(parser, ')')
+  expectPunct(parser, ';')
+  return {
+    ...blankShape(token),
+    kind: 'component',
+    componentName: name,
+    scale: { x: 1, y: 1, z: 1 }
+  }
+}
+
+function instantiatedComponents(nodes: ParsedNode[]): Set<string> {
+  const names = new Set<string>()
+  const walk = (node: ParsedNode): void => {
+    if (node.kind === 'component') names.add(node.componentName)
+    if (node.kind === 'union' || node.kind === 'difference' || node.kind === 'intersection') {
+      node.children.forEach(walk)
+    }
+  }
+  nodes.forEach(walk)
+  return names
 }
 
 function parseCuboid(parser: Parser): ParsedCuboid {
@@ -601,7 +718,7 @@ function parseSvgImport(parser: Parser, center: Vec2): ParsedSvg {
     else failToken(arg.value.token, `Argumento não suportado em import: ${arg.name}.`)
   }
   const assetId = file ? ASSET_PATH.exec(file)?.[1] : undefined
-  if (!file || !assetId) failToken(token, 'O SVG precisa estar em 3dev-assets/<id>.svg.')
+  if (!file || !assetId) failToken(token, 'O SVG precisa estar na pasta 3dev-assets do projeto.')
   return { ...blankProfile(token), kind: 'svg', assetId, center: roundVec2(center), openscadScale }
 }
 
@@ -612,13 +729,13 @@ function blankProfile(token: Token): ParsedBase & { extrusion: Extrusion } {
   }
 }
 
-function parseBoolean(parser: Parser, kind: BooleanKind): ParsedBoolean {
+function parseBoolean(parser: Parser, kind: BooleanKind, previous: ProjectDocument): ParsedBoolean {
   const token = expectIdent(parser, kind)
   expectPunct(parser, '(')
   expectPunct(parser, ')')
   expectPunct(parser, '{')
   const children: ParsedNode[] = []
-  while (!isPunct(parser, '}') && !isEof(parser)) children.push(parseStatement(parser))
+  while (!isPunct(parser, '}') && !isEof(parser)) children.push(parseStatement(parser, previous))
   expectPunct(parser, '}')
   if (isPunct(parser, ';')) eat(parser)
   if (children.length < 2) {
@@ -627,7 +744,7 @@ function parseBoolean(parser: Parser, kind: BooleanKind): ParsedBoolean {
   return { ...blankShape(token), kind, children, rounding: 0 }
 }
 
-function parseRound3d(parser: Parser): ParsedBoolean {
+function parseRound3d(parser: Parser, previous: ProjectDocument): ParsedBoolean {
   const token = expectIdent(parser, 'round3d')
   const args = parseArgs(parser)
   let rounding: number | null = null
@@ -649,7 +766,7 @@ function parseRound3d(parser: Parser): ParsedBoolean {
   if (isPunct(parser, '}')) {
     failToken(token, 'round3d precisa envolver união, diferença ou interseção.')
   }
-  const child = parseStatement(parser)
+  const child = parseStatement(parser, previous)
   expectPunct(parser, '}')
   if (isPunct(parser, ';')) eat(parser)
   if (!isParsedBoolean(child)) {
@@ -666,6 +783,7 @@ function isParsedBoolean(node: ParsedNode): node is ParsedBoolean {
 function parseModifier(parser: Parser): Modifier {
   if (isIdent(parser, 'color')) return parseColor(parser)
   if (isIdent(parser, 'translate')) return parseTranslate(parser)
+  if (isIdent(parser, 'scale')) return parseScale(parser)
   return parseRotate(parser)
 }
 
@@ -713,6 +831,20 @@ function parseTranslate(parser: Parser): TranslateModifier {
   }
 }
 
+function parseScale(parser: Parser): ScaleModifier {
+  const token = expectIdent(parser, 'scale')
+  const args = parseArgs(parser)
+  if (args.length !== 1 || args[0].name !== null) {
+    failToken(token, 'scale() aceita apenas [x, y, z].')
+  }
+  return {
+    kind: 'scale',
+    scale: requireCoordinate(args[0].value, 'scale() aceita apenas [x, y, z].'),
+    line: token.line,
+    column: token.column
+  }
+}
+
 function parseRotate(parser: Parser): RotateModifier {
   const token = expectIdent(parser, 'rotate')
   const args = parseArgs(parser)
@@ -725,6 +857,28 @@ function parseRotate(parser: Parser): RotateModifier {
     line: token.line,
     column: token.column
   }
+}
+
+function parseUse(parser: Parser, previous: ProjectDocument, fileName: string): string {
+  const keyword = eat(parser)
+  expectPunct(parser, '<')
+  let path = ''
+  while (!isPunct(parser, '>') && !isEof(parser)) path += eat(parser).value
+  expectPunct(parser, '>')
+  if (isPunct(parser, ';')) eat(parser)
+  const match =
+    fileName === MAIN_FILE
+      ? /^components\/([A-Za-z_][A-Za-z0-9_]*)\.scad$/.exec(path)
+      : /^([A-Za-z_][A-Za-z0-9_]*)\.scad$/.exec(path)
+  const name = match?.[1]
+  if (!name || name === MAIN_FILE || !previous.files[name]) {
+    throw new ParseFailure(
+      `use não suportado: ${path || keyword.value}.`,
+      keyword.line,
+      keyword.column
+    )
+  }
+  return name
 }
 
 function parseInclude(parser: Parser): void {
@@ -826,7 +980,7 @@ function validateModifierOrder(modifiers: Modifier[]): void {
     const index = MODIFIER_ORDER.indexOf(modifier.kind)
     if (index <= last) {
       throw new ParseFailure(
-        'Use cada transform uma vez, na ordem color, translate e rotate.',
+        'Use cada transform uma vez, na ordem color, translate, rotate e scale.',
         modifier.line,
         modifier.column
       )
@@ -839,33 +993,42 @@ function applyModifiers(node: ParsedNode, modifiers: Modifier[]): ParsedNode {
   let appearance = node.appearance
   let position = node.transform.position
   let rotation = node.transform.rotation
+  let scale = node.kind === 'component' ? node.scale : null
   for (const modifier of modifiers) {
     if (modifier.kind === 'color') {
       appearance = { color: modifier.color, opacity: modifier.opacity }
     } else if (modifier.kind === 'translate') {
       position = modifier.position
-    } else {
+    } else if (modifier.kind === 'rotate') {
       rotation = modifier.rotation
+    } else if (node.kind !== 'component') {
+      throw new ParseFailure(
+        'scale() só se aplica a um componente.',
+        modifier.line,
+        modifier.column
+      )
+    } else {
+      scale = modifier.scale
     }
   }
-  return {
+  const transformed = {
     ...node,
     appearance,
     transform: { position: roundVec(position), rotation: roundVec(rotation) }
   }
+  if (transformed.kind !== 'component' || !scale) return transformed
+  return { ...transformed, scale: roundVec(scale) }
 }
 
 function reconcile(previous: ProjectDocument, parsed: ParsedNode[], fn: number): ProjectDocument {
   const context: BuildContext = { previous, nodes: {} }
   matchList(getRoots(previous), parsed, null, context)
-  return pruneAssets({
-    version: 1,
-    name: previous.name,
-    units: 'mm',
-    fn,
-    nodes: context.nodes,
-    assets: previous.assets
-  })
+  return pruneAssets(
+    replaceActive(
+      { ...previous, fn },
+      { nodes: context.nodes, assets: activeModel(previous).assets }
+    )
+  )
 }
 
 function matchList(
@@ -934,7 +1097,8 @@ function materialize(
   context: BuildContext
 ): string {
   const id = prev?.id ?? crypto.randomUUID()
-  const name = prev?.name ?? nextFeatureName(context, LABELS[parsed.kind])
+  const label = parsed.kind === 'component' ? parsed.componentName : LABELS[parsed.kind]
+  const name = prev?.name ?? nextFeatureName(context, label)
   const shared = {
     id,
     name,
@@ -976,6 +1140,14 @@ function materialize(
     context.nodes[id] = node
   } else if (isParsedProfile(parsed)) {
     context.nodes[id] = materializeProfile(parsed, shared, context)
+  } else if (parsed.kind === 'component') {
+    const node: ComponentInstanceNode = {
+      ...shared,
+      kind: 'component',
+      componentName: parsed.componentName,
+      scale: roundVec(parsed.scale)
+    }
+    context.nodes[id] = node
   } else {
     const node: BooleanNode = {
       ...shared,
@@ -988,7 +1160,13 @@ function materialize(
     const childIds = matchList(previousChildren, parsed.children, id, context)
     const draft: BooleanNode = { ...node, childIds }
     const limit = booleanRadiusLimit(
-      localBounds({ ...context.previous, nodes: context.nodes }, draft)
+      localBounds(
+        replaceActive(context.previous, {
+          nodes: context.nodes,
+          assets: activeModel(context.previous).assets
+        }),
+        draft
+      )
     )
     context.nodes[id] = { ...draft, rounding: Math.min(limit, Math.max(0, draft.rounding)) }
   }
@@ -1017,7 +1195,7 @@ function assertRemovable(
   }
   if (!isBooleanNode(node)) return
   for (const childId of node.childIds) {
-    const child = previous.nodes[childId]
+    const child = activeModel(previous).nodes[childId]
     if (child) assertRemovable(child, previous, at)
   }
 }
@@ -1026,7 +1204,7 @@ function keepSubtree(node: FeatureNode, context: BuildContext): void {
   context.nodes[node.id] = cloneNode(node)
   if (!isBooleanNode(node)) return
   for (const childId of node.childIds) {
-    const child = context.previous.nodes[childId]
+    const child = activeModel(context.previous).nodes[childId]
     if (child) keepSubtree(child, context)
   }
 }
@@ -1125,7 +1303,7 @@ function materializeProfile(
     }
     return node
   }
-  const asset = context.previous.assets[parsed.assetId]
+  const asset = activeModel(context.previous).assets[parsed.assetId]
   if (!asset) {
     throw new ParseFailure('Esse SVG não está no projeto.', parsed.line, parsed.column)
   }
@@ -1163,6 +1341,7 @@ function cloneNode(node: FeatureNode): FeatureNode {
     appearance: { ...node.appearance }
   }
   if (isCuboidNode(node) && isCuboidNode(copy)) return { ...copy, size: { ...node.size } }
+  if (isComponentNode(node) && isComponentNode(copy)) return { ...copy, scale: { ...node.scale } }
   if (isBooleanNode(node) && isBooleanNode(copy)) return { ...copy, childIds: [...node.childIds] }
   if (isProfileNode(node) && isProfileNode(copy)) return cloneProfile(node)
   return copy
@@ -1187,15 +1366,16 @@ function cloneProfile(node: FeatureNode): FeatureNode {
 }
 
 function childNodes(document: ProjectDocument, node: BooleanNode): FeatureNode[] {
+  const nodes = activeModel(document).nodes
   return node.childIds.flatMap((id) => {
-    const child = document.nodes[id]
+    const child = nodes[id]
     return child ? [child] : []
   })
 }
 
 function nextFeatureName(context: BuildContext, label: string): string {
   const used = new Set<string>()
-  for (const node of Object.values(context.previous.nodes)) used.add(node.name)
+  for (const node of Object.values(activeModel(context.previous).nodes)) used.add(node.name)
   for (const node of Object.values(context.nodes)) used.add(node.name)
   let index = 1
   let name = `${label} ${index}`
@@ -1297,6 +1477,13 @@ function signature(node: FeatureNode): string {
       viewMin: roundVec2(node.viewMin),
       viewSize: roundVec2(node.viewSize),
       extrusion: roundExtrusion(node.extrusion)
+    })
+  }
+  if (isComponentNode(node)) {
+    return JSON.stringify({
+      ...common,
+      componentName: node.componentName,
+      scale: roundVec(node.scale)
     })
   }
   return JSON.stringify(common)
@@ -1608,7 +1795,12 @@ function isPunct(parser: Parser, value: string): boolean {
 }
 
 function isModifier(parser: Parser): boolean {
-  return isIdent(parser, 'color') || isIdent(parser, 'translate') || isIdent(parser, 'rotate')
+  return (
+    isIdent(parser, 'color') ||
+    isIdent(parser, 'translate') ||
+    isIdent(parser, 'rotate') ||
+    isIdent(parser, 'scale')
+  )
 }
 
 function expectIdent(parser: Parser, value: string): Token {

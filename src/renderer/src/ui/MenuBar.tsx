@@ -6,13 +6,7 @@ import {
   saveCurrentProject
 } from './projectActions'
 
-export function MenuBar({
-  source,
-  onNew
-}: {
-  source: string
-  onNew: () => void
-}): React.JSX.Element {
+export function MenuBar({ onNew }: { onNew: () => void }): React.JSX.Element {
   const filePath = useEditor((state) => state.filePath)
   const isProject = useEditor((state) => state.isProject)
   return (
@@ -20,10 +14,10 @@ export function MenuBar({
       <span className="px-2 text-[13px] font-semibold text-[#f3f5f8]">3dev</span>
       <MenuButton label="Novo" onClick={onNew} />
       <MenuButton label="Abrir" onClick={() => void openProjectFile()} />
-      <MenuButton label="Salvar" onClick={() => void saveCurrentProject(source)} />
-      <MenuButton label="Exportar SCAD" onClick={() => void exportCurrentScad(source)} />
+      <MenuButton label="Salvar" onClick={() => void saveCurrentProject()} />
+      <MenuButton label="Exportar SCAD" onClick={() => void exportCurrentScad()} />
       <MenuButton label="Renderizar" onClick={() => useEditor.getState().requestExactPreview()} />
-      <MenuButton label="Exportar STL" onClick={() => void exportCurrentStl(source)} />
+      <MenuButton label="Exportar STL" onClick={() => void exportCurrentStl()} />
       <span className="ml-auto truncate px-2 text-[12px] text-[#8b93a3]">
         {projectLabel(filePath, isProject)}
       </span>

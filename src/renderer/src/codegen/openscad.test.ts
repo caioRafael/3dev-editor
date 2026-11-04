@@ -7,6 +7,7 @@ import {
   createProfile,
   createSvgProfile
 } from '../document/tree'
+import { activeModel, replaceActive, MAIN_FILE } from '../document/files'
 import {
   type CuboidNode,
   type CylinderNode,
@@ -122,17 +123,19 @@ translate([0, 0, 0])
 
   it('emits a sphere with opacity', () => {
     const created = createPrimitive(createEmptyDocument(), 'sphere')
-    const node = created.document.nodes[created.id]
+    const node = activeModel(created.document).nodes[created.id]
     if (node.kind !== 'sphere') throw new Error('expected sphere')
-    const source = generateOpenscad({
-      ...created.document,
-      nodes: {
-        [created.id]: {
-          ...node,
-          appearance: { color: DEFAULT_COLOR, opacity: 0.4 }
-        }
-      }
-    })
+    const source = generateOpenscad(
+      replaceActive(created.document, {
+        nodes: {
+          [created.id]: {
+            ...node,
+            appearance: { color: DEFAULT_COLOR, opacity: 0.4 }
+          }
+        },
+        assets: activeModel(created.document).assets
+      })
+    )
     expect(source).toContain(`color("${DEFAULT_COLOR}", 0.4)`)
     expect(source).toContain('spheroid(d=16, anchor=CENTER);')
   })
@@ -181,7 +184,7 @@ translate([0, 0, 0])
       '<svg viewBox="0 0 20 10" xmlns="http://www.w3.org/2000/svg"></svg>'
     )
     const source = generateOpenscad(created.document)
-    const assetId = Object.keys(created.document.assets)[0]
+    const assetId = Object.keys(activeModel(created.document).assets)[0]
     expect(source).toContain(`import("3dev-assets/${assetId}.svg", scale=3.78);`)
     expect(source).toContain('translate([-10, -5, 0])')
   })
@@ -201,7 +204,14 @@ translate([0, 0, 0])
 })
 
 function document(nodes: Record<string, FeatureNode>): ProjectDocument {
-  return { version: 1, name: 'example', units: 'mm', fn: 48, nodes, assets: {} }
+  return {
+    version: 2,
+    name: 'example',
+    units: 'mm',
+    fn: 48,
+    activeFile: MAIN_FILE,
+    files: { [MAIN_FILE]: { nodes, assets: {} } }
+  }
 }
 
 function cuboid(id: string, patch: Partial<CuboidNode> = {}): CuboidNode {
@@ -238,15 +248,15 @@ function cylinder(id: string, patch: Partial<CylinderNode> = {}): CylinderNode {
 }
 
 function patchPosition(documentState: ProjectDocument, id: string, x: number): ProjectDocument {
-  const node = documentState.nodes[id]
-  return {
-    ...documentState,
+  const node = activeModel(documentState).nodes[id]
+  return replaceActive(documentState, {
     nodes: {
-      ...documentState.nodes,
+      ...activeModel(documentState).nodes,
       [id]: {
         ...node,
         transform: { ...node.transform, position: { x, y: 0, z: 0 } }
       }
-    }
-  }
+    },
+    assets: activeModel(documentState).assets
+  })
 }

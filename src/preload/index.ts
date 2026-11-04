@@ -4,13 +4,14 @@ import { IpcChannel, type EditorApi } from '../shared/api'
 
 const api: EditorApi = {
   openscadDetect: () => ipcRenderer.invoke(IpcChannel.openscadDetect),
-  previewStl: (source, assets) => ipcRenderer.invoke(IpcChannel.previewStl, source, assets),
+  previewStl: (entry, files, assets) =>
+    ipcRenderer.invoke(IpcChannel.previewStl, entry, files, assets),
   saveProject: (request) => ipcRenderer.invoke(IpcChannel.saveProject, request),
   openProject: () => ipcRenderer.invoke(IpcChannel.openProject),
-  exportScad: (jsonPath, source, assets) =>
-    ipcRenderer.invoke(IpcChannel.exportScad, jsonPath, source, assets),
-  exportStl: (jsonPath, source, assets) =>
-    ipcRenderer.invoke(IpcChannel.exportStl, jsonPath, source, assets),
+  exportScad: (jsonPath, files, assets) =>
+    ipcRenderer.invoke(IpcChannel.exportScad, jsonPath, files, assets),
+  exportStl: (jsonPath, files, assets) =>
+    ipcRenderer.invoke(IpcChannel.exportStl, jsonPath, files, assets),
   pickSvg: () => ipcRenderer.invoke(IpcChannel.pickSvg),
   listProjectTree: (jsonPath) => ipcRenderer.invoke(IpcChannel.listProjectTree, jsonPath),
   listRecentProjects: () => ipcRenderer.invoke(IpcChannel.listRecentProjects),

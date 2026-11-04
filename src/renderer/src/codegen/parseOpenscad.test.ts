@@ -3,11 +3,14 @@ import { generateOpenscad } from './openscad'
 import { parseOpenscad } from './parseOpenscad'
 import {
   createBoolean,
+  createComponentFile,
+  createComponentInstance,
   createEmptyDocument,
   createPrimitive,
   createProfile,
   createSvgProfile
 } from '../document/tree'
+import { MAIN_FILE, activeModel, replaceActive } from '../document/files'
 import { type CuboidNode, type SphereNode } from '../document/types'
 import { useEditor } from '../document/store'
 
@@ -31,8 +34,8 @@ describe('parseOpenscad', () => {
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
     expect(generateOpenscad(parsed.document)).toBe(source)
-    expect(parsed.document.nodes[first.id]?.kind).toBe('cuboid')
-    expect(parsed.document.nodes[second.id]?.kind).toBe('cylinder')
+    expect(activeModel(parsed.document).nodes[first.id]?.kind).toBe('cuboid')
+    expect(activeModel(parsed.document).nodes[second.id]?.kind).toBe('cylinder')
   })
 
   it('updates a size from edited code and keeps the node identity', () => {
@@ -41,7 +44,7 @@ describe('parseOpenscad', () => {
     const parsed = parseOpenscad(source, created.document)
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
-    const node = parsed.document.nodes[created.id]
+    const node = activeModel(parsed.document).nodes[created.id]
     expect(node?.name).toBe(created.name)
     expect(isCuboid(node) && node.size).toEqual({ x: 32, y: 18, z: 20 })
   })
@@ -49,28 +52,28 @@ describe('parseOpenscad', () => {
   it('keeps hidden nodes that the source does not show', () => {
     const first = createPrimitive(createEmptyDocument(), 'cuboid')
     const second = createPrimitive(first.document, 'sphere')
-    const sphere = second.document.nodes[second.id]
-    const document = {
-      ...second.document,
+    const sphere = activeModel(second.document).nodes[second.id]
+    const document = replaceActive(second.document, {
       nodes: {
-        ...second.document.nodes,
+        ...activeModel(second.document).nodes,
         [second.id]: { ...sphere, visible: false }
-      }
-    }
+      },
+      assets: activeModel(second.document).assets
+    })
     const parsed = parseOpenscad(generateOpenscad(document), document)
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
-    expect(parsed.document.nodes[second.id]?.visible).toBe(false)
-    expect(parsed.document.nodes[first.id]?.kind).toBe('cuboid')
+    expect(activeModel(parsed.document).nodes[second.id]?.visible).toBe(false)
+    expect(activeModel(parsed.document).nodes[first.id]?.kind).toBe('cuboid')
   })
 
   it('rejects edits to a locked solid', () => {
     const created = createPrimitive(createEmptyDocument(), 'cuboid')
-    const node = created.document.nodes[created.id]
-    const document = {
-      ...created.document,
-      nodes: { [created.id]: { ...node, locked: true } }
-    }
+    const node = activeModel(created.document).nodes[created.id]
+    const document = replaceActive(created.document, {
+      nodes: { [created.id]: { ...node, locked: true } },
+      assets: activeModel(created.document).assets
+    })
     const source = generateOpenscad(document).replace('[20, 20, 20]', '[21, 20, 20]')
     const parsed = parseOpenscad(source, document)
     expect(parsed.ok).toBe(false)
@@ -94,17 +97,23 @@ describe('parseOpenscad', () => {
     const second = createPrimitive(first.document, 'cuboid')
     const result = createBoolean(second.document, 'union', [first.id, second.id])
     if (!result.id) throw new Error('expected boolean')
-    const booleanNode = result.document.nodes[result.id]
+    const booleanNode = activeModel(result.document).nodes[result.id]
     if (booleanNode?.kind !== 'union') throw new Error('expected union')
-    const document = {
-      ...result.document,
-      nodes: { ...result.document.nodes, [result.id]: { ...booleanNode, rounding: 2 } }
-    }
+    const document = replaceActive(result.document, {
+      nodes: {
+        ...activeModel(result.document).nodes,
+        [result.id]: { ...booleanNode, rounding: 2 }
+      },
+      assets: activeModel(result.document).assets
+    })
     const source = generateOpenscad(document)
     const parsed = parseOpenscad(source, document)
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
-    expect(parsed.document.nodes[result.id]).toMatchObject({ kind: 'union', rounding: 2 })
+    expect(activeModel(parsed.document).nodes[result.id]).toMatchObject({
+      kind: 'union',
+      rounding: 2
+    })
     expect(generateOpenscad(parsed.document)).toBe(source)
   })
 
@@ -147,7 +156,7 @@ cuboid([10, 10, 10], rounding=1, chamfer=1, anchor=CENTER);
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
     expect(generateOpenscad(parsed.document)).toBe(source)
-    expect(parsed.document.nodes[created.id]?.kind).toBe('text')
+    expect(activeModel(parsed.document).nodes[created.id]?.kind).toBe('text')
   })
 
   it('round-trips an svg import against the stored asset', () => {
@@ -161,7 +170,7 @@ cuboid([10, 10, 10], rounding=1, chamfer=1, anchor=CENTER);
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
     expect(generateOpenscad(parsed.document)).toBe(source)
-    expect(parsed.document.assets).toEqual(created.document.assets)
+    expect(activeModel(parsed.document).assets).toEqual(activeModel(created.document).assets)
   })
 
   it('adds a sphere written into the source', () => {
@@ -172,10 +181,31 @@ spheroid(d=10, anchor=CENTER);
     const parsed = parseOpenscad(source, created.document)
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
-    const sphere = Object.values(parsed.document.nodes).find((node) => node.kind === 'sphere')
+    const sphere = Object.values(activeModel(parsed.document).nodes).find(
+      (node) => node.kind === 'sphere'
+    )
     expect(isSphere(sphere) && sphere.diameter).toBe(10)
     expect(sphere?.name).toBe('Esfera 1')
-    expect(parsed.document.nodes[created.id]?.kind).toBe('cuboid')
+    expect(activeModel(parsed.document).nodes[created.id]?.kind).toBe('cuboid')
+  })
+
+  it('round-trips a component instance imported into main', () => {
+    const pino = createComponentFile(createEmptyDocument(), 'Pino')
+    const shaped = createPrimitive(pino.document, 'cuboid')
+    const main = createComponentInstance({ ...shaped.document, activeFile: MAIN_FILE }, 'Pino')
+    const componentSource = generateOpenscad(main.document, 'Pino')
+    const mainSource = generateOpenscad(main.document, MAIN_FILE)
+    expect(componentSource).toContain('module Pino() {')
+    expect(componentSource).toContain('Pino();')
+    expect(mainSource).toContain('use <components/Pino.scad>')
+    expect(mainSource).toContain('Pino();')
+    const parsedMain = parseOpenscad(mainSource, { ...main.document, activeFile: MAIN_FILE })
+    const parsedPino = parseOpenscad(componentSource, { ...main.document, activeFile: 'Pino' })
+    expect(parsedMain.ok).toBe(true)
+    expect(parsedPino.ok).toBe(true)
+    if (!parsedMain.ok || !parsedPino.ok) return
+    expect(generateOpenscad(parsedMain.document, MAIN_FILE)).toBe(mainSource)
+    expect(generateOpenscad(parsedPino.document, 'Pino')).toBe(componentSource)
   })
 })
 
@@ -184,15 +214,15 @@ describe('applyCode', () => {
     useEditor.getState().newDocument()
     useEditor.getState().addPrimitive('cuboid')
     const current = useEditor.getState().document
-    const id = Object.keys(current.nodes)[0] ?? ''
+    const id = Object.keys(activeModel(current).nodes)[0] ?? ''
     const source = generateOpenscad(current).replace('[20, 20, 20]', '[40, 20, 20]')
     const parsed = parseOpenscad(source, current)
     if (!parsed.ok) throw new Error(parsed.message)
     useEditor.getState().applyCode(parsed.document)
-    const edited = useEditor.getState().document.nodes[id]
+    const edited = activeModel(useEditor.getState().document).nodes[id]
     expect(isCuboid(edited) && edited.size.x).toBe(40)
     useEditor.getState().undo()
-    const restored = useEditor.getState().document.nodes[id]
+    const restored = activeModel(useEditor.getState().document).nodes[id]
     expect(isCuboid(restored) && restored.size.x).toBe(20)
   })
 })

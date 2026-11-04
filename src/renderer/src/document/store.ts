@@ -7,14 +7,18 @@ import {
   type Transform,
   type Vec3
 } from './types'
+import { MAIN_FILE, activeModel } from './files'
 import {
   bakeScale,
   createBoolean,
+  createComponentFile,
+  createComponentInstance,
   createEmptyDocument,
   createPrimitive,
   createProfile,
   createSvgProfile,
   deleteNodes,
+  openModelFile,
   patchNode,
   setNodeTransform,
   type BooleanResult
@@ -55,6 +59,9 @@ interface EditorState {
   addPrimitive: (kind: PrimitiveKind) => void
   addProfile: (kind: ShapeProfileKind) => void
   addSvg: (fileName: string, source: string) => void
+  createComponent: (name: string) => void
+  addComponent: (componentName: string) => void
+  openFile: (fileName: string) => void
   applyBoolean: (kind: BooleanKind) => void
   removeSelected: () => void
   updateNode: (id: string, patch: FeaturePatch, recordHistory?: boolean) => void
@@ -113,7 +120,7 @@ export const useEditor = create<EditorState>((set) => ({
 
   toggleVisible: (id) =>
     set((state) => {
-      const node = state.document.nodes[id]
+      const node = activeModel(state.document).nodes[id]
       if (!node) return state
       return commit(state, patchNode(state.document, id, { visible: !node.visible }))
     }),
@@ -154,11 +161,13 @@ export const useEditor = create<EditorState>((set) => ({
       const previous = state.past.at(-1)
       if (!previous) return state
       return {
-        document: previous,
         past: state.past.slice(0, -1),
         future: [state.document, ...state.future].slice(0, HISTORY_LIMIT),
         historyPending: false,
-        selection: state.selection.filter((id) => previous.nodes[id])
+        selection: state.selection.filter(
+          (id) => activeModel(restoredDocument(previous, state.document.activeFile)).nodes[id]
+        ),
+        document: restoredDocument(previous, state.document.activeFile)
       }
     }),
 
@@ -166,12 +175,13 @@ export const useEditor = create<EditorState>((set) => ({
     set((state) => {
       const next = state.future[0]
       if (!next) return state
+      const document = restoredDocument(next, state.document.activeFile)
       return {
-        document: next,
+        document,
         future: state.future.slice(1),
         past: [...state.past, state.document].slice(-HISTORY_LIMIT),
         historyPending: false,
-        selection: state.selection.filter((id) => next.nodes[id])
+        selection: state.selection.filter((id) => activeModel(document).nodes[id])
       }
     }),
 
@@ -206,6 +216,36 @@ export const useEditor = create<EditorState>((set) => ({
       }
     }),
 
+  createComponent: (name) =>
+    set((state) => {
+      const created = createComponentFile(state.document, name)
+      if (created.error) return { status: created.error }
+      return {
+        ...commit(state, created.document),
+        selection: [],
+        status: `Componente ${name.trim()} criado`
+      }
+    }),
+
+  addComponent: (componentName) =>
+    set((state) => {
+      const created = createComponentInstance(state.document, componentName)
+      if (!created.id)
+        return { status: created.error ?? 'Não foi possível adicionar o componente.' }
+      return {
+        ...commit(state, created.document),
+        selection: [created.id],
+        status: `${created.name ?? componentName} adicionado`
+      }
+    }),
+
+  openFile: (fileName) =>
+    set((state) => {
+      const document = openModelFile(state.document, fileName)
+      if (document === state.document) return state
+      return { document, selection: [] }
+    }),
+
   applyBoolean: (kind) =>
     set((state) => {
       const result: BooleanResult = createBoolean(state.document, kind, state.selection)
@@ -220,7 +260,7 @@ export const useEditor = create<EditorState>((set) => ({
   removeSelected: () =>
     set((state) => {
       if (state.selection.length === 0) return state
-      if (state.selection.some((id) => state.document.nodes[id]?.locked)) {
+      if (state.selection.some((id) => activeModel(state.document).nodes[id]?.locked)) {
         return { status: 'Há sólidos travados na seleção.' }
       }
       return {
@@ -232,7 +272,7 @@ export const useEditor = create<EditorState>((set) => ({
 
   updateNode: (id, patch, recordHistory = true) =>
     set((state) => {
-      const node = state.document.nodes[id]
+      const node = activeModel(state.document).nodes[id]
       if (!node) return state
       const keys = Object.keys(patch)
       const metadataOnly = keys.every((key) => key === 'locked' || key === 'visible')
@@ -265,7 +305,7 @@ export const useEditor = create<EditorState>((set) => ({
 
   commitTransform: (id, transform, scale) =>
     set((state) => {
-      const node = state.document.nodes[id]
+      const node = activeModel(state.document).nodes[id]
       if (!node || node.locked) return node?.locked ? { status: 'Sólido travado.' } : state
       const moved = setNodeTransform(state.document, id, transform)
       const next = scale ? bakeScale(moved, id, scale) : moved
@@ -285,10 +325,14 @@ export const useEditor = create<EditorState>((set) => ({
       if (!next.document) return {}
       return {
         ...next,
-        selection: state.selection.filter((id) => document.nodes[id])
+        selection: state.selection.filter((id) => activeModel(document).nodes[id])
       }
     })
 }))
+
+function restoredDocument(snapshot: ProjectDocument, activeFile: string): ProjectDocument {
+  return { ...snapshot, activeFile: snapshot.files[activeFile] ? activeFile : MAIN_FILE }
+}
 
 function commit(state: EditorState, document: ProjectDocument): Partial<EditorState> {
   if (JSON.stringify(state.document) === JSON.stringify(document)) return {}

@@ -1,54 +1,27 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import {
-  Box,
-  Circle,
-  Cylinder,
-  Ellipse,
+  Component,
   MousePointer2,
   Move,
-  Pentagon,
   Rotate3d,
   Scaling,
   Shapes,
   Spline,
-  Square,
   SquaresIntersect,
   SquaresSubtract,
   SquaresUnite,
-  Star,
-  Type,
-  createLucideIcon,
   type LucideIcon
 } from 'lucide-react'
-import type { BooleanKind, EditorTool, PrimitiveKind, ShapeProfileKind } from '../document/types'
+import type { BooleanKind, EditorTool } from '../document/types'
+import { componentNames } from '../document/files'
 import { useEditor } from '../document/store'
-
-const SphereIcon = createLucideIcon('sphere', [
-  ['circle', { cx: '12', cy: '12', r: '9' }],
-  ['ellipse', { cx: '12', cy: '12', rx: '4.5', ry: '9' }],
-  ['path', { d: 'M3 12h18' }]
-])
+import { PRIMITIVES, PROFILES } from './shapeCatalog'
 
 const MODES: { tool: EditorTool; label: string; icon: LucideIcon }[] = [
   { tool: 'select', label: 'Selecionar', icon: MousePointer2 },
   { tool: 'move', label: 'Mover', icon: Move },
   { tool: 'rotate', label: 'Girar', icon: Rotate3d },
   { tool: 'scale', label: 'Escalar', icon: Scaling }
-]
-
-const PRIMITIVES: { kind: PrimitiveKind; label: string; icon: LucideIcon }[] = [
-  { kind: 'cuboid', label: 'Cubo', icon: Box },
-  { kind: 'cylinder', label: 'Cilindro', icon: Cylinder },
-  { kind: 'sphere', label: 'Esfera', icon: SphereIcon }
-]
-
-const PROFILES: { kind: ShapeProfileKind; label: string; icon: LucideIcon }[] = [
-  { kind: 'rect', label: 'Retângulo', icon: Square },
-  { kind: 'circle', label: 'Círculo', icon: Circle },
-  { kind: 'ellipse', label: 'Elipse', icon: Ellipse },
-  { kind: 'ngon', label: 'Polígono', icon: Pentagon },
-  { kind: 'star', label: 'Estrela', icon: Star },
-  { kind: 'text', label: 'Texto', icon: Type }
 ]
 
 const BOOLEANS: { kind: BooleanKind; label: string; icon: LucideIcon }[] = [
@@ -59,22 +32,30 @@ const BOOLEANS: { kind: BooleanKind; label: string; icon: LucideIcon }[] = [
 
 export function Toolbar(): React.JSX.Element {
   const tool = useEditor((state) => state.tool)
+  const document = useEditor((state) => state.document)
+  const components = componentNames(document).filter((name) => name !== document.activeFile)
   const [open, setOpen] = useState(false)
+  const [componentsOpen, setComponentsOpen] = useState(false)
   const menuId = useId()
+  const componentMenuId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
+  const componentRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!open) return
+    if (!open && !componentsOpen) return
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
       event.preventDefault()
       event.stopPropagation()
       setOpen(false)
+      setComponentsOpen(false)
     }
     const onPointerDown = (event: PointerEvent): void => {
       const target = event.target
       if (target instanceof Node && rootRef.current?.contains(target)) return
+      if (target instanceof Node && componentRef.current?.contains(target)) return
       setOpen(false)
+      setComponentsOpen(false)
     }
     window.addEventListener('keydown', onKeyDown, true)
     window.addEventListener('pointerdown', onPointerDown)
@@ -82,7 +63,7 @@ export function Toolbar(): React.JSX.Element {
       window.removeEventListener('keydown', onKeyDown, true)
       window.removeEventListener('pointerdown', onPointerDown)
     }
-  }, [open])
+  }, [open, componentsOpen])
 
   return (
     <div className="relative z-20 flex h-11 shrink-0 items-center gap-1 border-b border-[#2c3240] bg-[#1b1e27] px-2">
@@ -106,7 +87,10 @@ export function Toolbar(): React.JSX.Element {
           aria-haspopup="menu"
           aria-expanded={open}
           aria-controls={menuId}
-          onClick={() => setOpen((current) => !current)}
+          onClick={() => {
+            setComponentsOpen(false)
+            setOpen((current) => !current)
+          }}
         />
         {open ? (
           <div
@@ -140,6 +124,42 @@ export function Toolbar(): React.JSX.Element {
               onClick={() => void importSvg()}
               close={() => setOpen(false)}
             />
+          </div>
+        ) : null}
+      </div>
+      <div className="relative" ref={componentRef}>
+        <IconButton
+          label="Componentes"
+          icon={Component}
+          active={componentsOpen}
+          showTooltip={!componentsOpen}
+          aria-haspopup="menu"
+          aria-expanded={componentsOpen}
+          aria-controls={componentMenuId}
+          onClick={() => {
+            setOpen(false)
+            setComponentsOpen((current) => !current)
+          }}
+        />
+        {componentsOpen ? (
+          <div
+            id={componentMenuId}
+            role="menu"
+            className="absolute top-full left-0 z-20 mt-1 w-44 rounded-md border border-[#2c3240] bg-[#1b1e27] p-1 shadow-xl"
+          >
+            {components.length === 0 ? (
+              <p className="px-2 py-1.5 text-[12px] text-[#8b93a3]">Nenhum componente</p>
+            ) : (
+              components.map((name) => (
+                <MenuItem
+                  key={name}
+                  label={name}
+                  icon={Component}
+                  onClick={() => useEditor.getState().addComponent(name)}
+                  close={() => setComponentsOpen(false)}
+                />
+              ))
+            )}
           </div>
         ) : null}
       </div>

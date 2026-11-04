@@ -6,6 +6,7 @@ import { useEditor } from '../document/store'
 import {
   type FeatureNode,
   isBooleanNode,
+  isComponentNode,
   isCuboidNode,
   isCylinderNode,
   isProfileNode,
@@ -19,11 +20,20 @@ import { useViewportInteraction, dragIdRef } from './interaction'
 
 interface FeatureViewProps {
   id: string
+  fileName?: string
+  selectId?: string
 }
 
-export function FeatureView({ id }: FeatureViewProps): React.JSX.Element | null {
-  const node = useEditor((state) => state.document.nodes[id])
-  const selected = useEditor((state) => state.selection.includes(id))
+export function FeatureView({
+  id,
+  fileName,
+  selectId
+}: FeatureViewProps): React.JSX.Element | null {
+  const node = useEditor((state) => {
+    const owner = fileName ?? state.document.activeFile
+    return state.document.files[owner]?.nodes[id]
+  })
+  const selected = useEditor((state) => state.selection.includes(selectId ?? id))
   const previewMode = useEditor((state) => state.previewMode)
   const segments = useEditor((state) => Math.max(8, Math.min(128, Math.round(state.document.fn))))
   const groupRef = useRef<Group>(null)
@@ -54,46 +64,81 @@ export function FeatureView({ id }: FeatureViewProps): React.JSX.Element | null 
   }, [id, node])
 
   if (!node || !node.visible) return null
+  const nested = selectId !== undefined
+  const picking = selectId ?? id
   const showMesh = !node.consumedBy || selected
-  const interactive = previewMode === 'fast' && !node.consumedBy
+  const interactive = previewMode === 'fast' && !node.consumedBy && !nested
 
   return (
     <group ref={groupRef}>
+      {showMesh && isComponentNode(node) ? (
+        <group scale={[node.scale.x, node.scale.y, node.scale.z]}>
+          <ComponentBodies componentName={node.componentName} selectId={picking} />
+        </group>
+      ) : null}
       {showMesh && isBooleanNode(node) ? (
-        <BooleanMesh node={node} selected={selected} interactive={interactive} />
+        <BooleanMesh
+          node={node}
+          fileName={fileName}
+          selected={selected}
+          interactive={interactive}
+          selectId={picking}
+        />
       ) : null}
       {showMesh && isProfileNode(node) ? (
         <ProfileMesh
           node={node}
-          selected={selected}
-          interactive={interactive}
+          selected={selected && !nested}
+          interactive={interactive || nested}
           segments={segments}
           ghost={Boolean(node.consumedBy)}
+          selectId={picking}
         />
       ) : null}
-      {showMesh && !isBooleanNode(node) && !isProfileNode(node) ? (
+      {showMesh && !isBooleanNode(node) && !isProfileNode(node) && !isComponentNode(node) ? (
         <PrimitiveMesh
           node={node}
-          selected={selected}
-          interactive={interactive}
+          selected={selected && !nested}
+          interactive={interactive || nested}
           segments={segments}
           ghost={Boolean(node.consumedBy)}
+          selectId={picking}
         />
       ) : null}
       {isBooleanNode(node)
-        ? node.childIds.map((childId) => <FeatureView key={childId} id={childId} />)
+        ? node.childIds.map((childId) => (
+            <FeatureView key={childId} id={childId} fileName={fileName} selectId={selectId} />
+          ))
         : null}
     </group>
+  )
+}
+
+function ComponentBodies({
+  componentName,
+  selectId
+}: {
+  componentName: string
+  selectId: string
+}): React.JSX.Element {
+  const nodes = useEditor((state) => state.document.files[componentName]?.nodes)
+  const roots = nodes ? Object.values(nodes).filter((node) => node.consumedBy === null) : []
+  return (
+    <>
+      {roots.map((root) => (
+        <FeatureView key={root.id} id={root.id} fileName={componentName} selectId={selectId} />
+      ))}
+    </>
   )
 }
 
 export function SelectionGizmo(): React.JSX.Element | null {
   const tool = useEditor((state) => state.tool)
   const selection = useEditor((state) => state.selection)
-  const nodes = useEditor((state) => state.document.nodes)
+  const nodes = useEditor((state) => state.document.files[state.document.activeFile]?.nodes)
   const { refs, version } = useViewportInteraction()
   const selectedId = selection.at(-1) ?? null
-  const node = selectedId ? nodes[selectedId] : undefined
+  const node = selectedId && nodes ? nodes[selectedId] : undefined
   const object = selectedId ? refs.current.get(selectedId) : undefined
   if (!selectedId || !node || !object || node.locked) return null
   if (tool !== 'move' && tool !== 'rotate' && tool !== 'scale') return null
@@ -136,13 +181,15 @@ function PrimitiveMesh({
   selected,
   interactive,
   segments,
-  ghost
+  ghost,
+  selectId
 }: {
   node: FeatureNode
   selected: boolean
   interactive: boolean
   segments: number
   ghost: boolean
+  selectId: string
 }): React.JSX.Element {
   const opacity = ghost ? Math.min(node.appearance.opacity, 0.45) : node.appearance.opacity
   const rounded = useCuboidGeometry(node, segments)
@@ -152,7 +199,7 @@ function PrimitiveMesh({
       castShadow
       geometry={rounded ?? undefined}
       rotation={isCylinderNode(node) ? [Math.PI / 2, 0, 0] : [0, 0, 0]}
-      onPointerDown={(event) => selectFromEvent(event, node.id)}
+      onPointerDown={(event) => selectFromEvent(event, selectId)}
       {...(interactive ? {} : { raycast: skipRaycast })}
     >
       {isCuboidNode(node) && !rounded ? (
@@ -187,13 +234,15 @@ function ProfileMesh({
   selected,
   interactive,
   segments,
-  ghost
+  ghost,
+  selectId
 }: {
   node: FeatureNode
   selected: boolean
   interactive: boolean
   segments: number
   ghost: boolean
+  selectId: string
 }): React.JSX.Element | null {
   const geometry = useProfileGeometry(node, segments)
   if (!geometry) return null
@@ -202,7 +251,7 @@ function ProfileMesh({
     <mesh
       geometry={geometry}
       castShadow
-      onPointerDown={(event) => selectFromEvent(event, node.id)}
+      onPointerDown={(event) => selectFromEvent(event, selectId)}
       {...(interactive ? {} : { raycast: skipRaycast })}
     >
       <meshStandardMaterial
@@ -223,20 +272,24 @@ function ProfileMesh({
 
 function BooleanMesh({
   node,
+  fileName,
   selected,
-  interactive
+  interactive,
+  selectId
 }: {
   node: FeatureNode
+  fileName?: string
   selected: boolean
   interactive: boolean
+  selectId: string
 }): React.JSX.Element | null {
-  const geometry = useBooleanGeometry(node.id)
+  const geometry = useBooleanGeometry(node.id, fileName)
   if (!geometry) return null
   return (
     <mesh
       geometry={geometry}
       castShadow
-      onPointerDown={(event) => selectFromEvent(event, node.id)}
+      onPointerDown={(event) => selectFromEvent(event, selectId)}
       {...(interactive ? {} : { raycast: skipRaycast })}
     >
       <meshStandardMaterial

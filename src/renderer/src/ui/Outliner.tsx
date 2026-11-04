@@ -1,3 +1,4 @@
+import { activeModel } from '../document/files'
 import { useEditor } from '../document/store'
 import { getRoots } from '../document/tree'
 import { isBooleanNode } from '../document/types'
@@ -24,7 +25,7 @@ export function Outliner(): React.JSX.Element {
 }
 
 function OutlinerNode({ id, depth }: { id: string; depth: number }): React.JSX.Element | null {
-  const node = useEditor((state) => state.document.nodes[id])
+  const node = useEditor((state) => activeModel(state.document).nodes[id])
   const selected = useEditor((state) => state.selection.includes(id))
   if (!node) return null
   return (

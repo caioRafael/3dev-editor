@@ -8,6 +8,7 @@ import {
   type Vec3,
   isBooleanNode,
   isCircleNode,
+  isComponentNode,
   isCuboidNode,
   isCylinderNode,
   isEllipseNode,
@@ -40,16 +41,23 @@ export interface Bounds {
   max: Vec3
 }
 
-export function localBounds(document: ProjectDocument, node: FeatureNode): Bounds | null {
+export function localBounds(
+  document: ProjectDocument,
+  node: FeatureNode,
+  fileName = document.activeFile,
+  seen: string[] = []
+): Bounds | null {
+  if (isComponentNode(node)) return componentBounds(document, node, seen)
   if (isCuboidNode(node)) return centeredBox(node.size.x, node.size.y, node.size.z)
   if (isCylinderNode(node)) return centeredBox(node.diameter, node.diameter, node.height)
   if (isSphereNode(node)) return centeredBox(node.diameter, node.diameter, node.diameter)
   if (isProfileNode(node)) return profileBounds(node)
   if (!isBooleanNode(node)) return null
+  const nodes = document.files[fileName]?.nodes ?? {}
   const placed = node.childIds
-    .map((id) => document.nodes[id])
+    .map((id) => nodes[id])
     .filter((child): child is FeatureNode => child !== undefined && child.visible)
-    .map((child) => placedBounds(document, child))
+    .map((child) => placedBounds(document, child, fileName, seen))
     .filter((bounds): bounds is Bounds => bounds !== null)
   if (placed.length === 0) return null
   if (node.kind === 'difference') return placed[0]
@@ -215,8 +223,46 @@ function centeredBox(width: number, depth: number, height: number): Bounds {
   }
 }
 
-function placedBounds(document: ProjectDocument, node: FeatureNode): Bounds | null {
-  const bounds = localBounds(document, node)
+function componentBounds(
+  document: ProjectDocument,
+  node: FeatureNode & { kind: 'component' },
+  seen: string[]
+): Bounds | null {
+  if (seen.includes(node.componentName)) return null
+  const file = document.files[node.componentName]
+  if (!file) return null
+  const nextSeen = [...seen, node.componentName]
+  const placed = Object.values(file.nodes)
+    .filter((child) => child.consumedBy === null && child.visible)
+    .map((child) => placedBounds(document, child, node.componentName, nextSeen))
+    .filter((bounds): bounds is Bounds => bounds !== null)
+  if (placed.length === 0) return null
+  return scaleBounds(unionBounds(placed), node.scale)
+}
+
+function scaleBounds(bounds: Bounds, scale: Vec3): Bounds {
+  const factor = { x: Math.abs(scale.x), y: Math.abs(scale.y), z: Math.abs(scale.z) }
+  return {
+    min: {
+      x: Math.min(bounds.min.x * factor.x, bounds.max.x * factor.x),
+      y: Math.min(bounds.min.y * factor.y, bounds.max.y * factor.y),
+      z: Math.min(bounds.min.z * factor.z, bounds.max.z * factor.z)
+    },
+    max: {
+      x: Math.max(bounds.min.x * factor.x, bounds.max.x * factor.x),
+      y: Math.max(bounds.min.y * factor.y, bounds.max.y * factor.y),
+      z: Math.max(bounds.min.z * factor.z, bounds.max.z * factor.z)
+    }
+  }
+}
+
+function placedBounds(
+  document: ProjectDocument,
+  node: FeatureNode,
+  fileName: string,
+  seen: string[]
+): Bounds | null {
+  const bounds = localBounds(document, node, fileName, seen)
   if (!bounds) return null
   return transformBounds(bounds, node.transform)
 }

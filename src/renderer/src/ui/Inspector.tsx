@@ -9,6 +9,7 @@ import {
   type Vec3,
   isBooleanNode,
   isCircleNode,
+  isComponentNode,
   isCuboidNode,
   isCylinderNode,
   isEllipseNode,
@@ -23,9 +24,9 @@ import {
 
 export function Inspector(): React.JSX.Element {
   const selection = useEditor((state) => state.selection)
-  const nodes = useEditor((state) => state.document.nodes)
+  const nodes = useEditor((state) => state.document.files[state.document.activeFile]?.nodes)
   const selectedId = selection.at(-1) ?? null
-  const node = selectedId ? nodes[selectedId] : undefined
+  const node = selectedId && nodes ? nodes[selectedId] : undefined
 
   return (
     <aside className="flex w-72 shrink-0 flex-col border-l border-[#2c3240] bg-[#1b1e27]">
@@ -81,6 +82,17 @@ function NodeFields({
             .updateNode(id, { transform: { position: node.transform.position, rotation } })
         }
       />
+      {isComponentNode(node) ? (
+        <>
+          <p className="text-[#9aa3b2]">Componente {node.componentName}</p>
+          <VectorFields
+            label="Escala"
+            value={node.scale}
+            disabled={disabled}
+            onCommit={(scale) => useEditor.getState().updateNode(id, { scale })}
+          />
+        </>
+      ) : null}
       {isCuboidNode(node) ? (
         <>
           <VectorFields

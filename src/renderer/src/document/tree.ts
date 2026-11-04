@@ -10,9 +10,18 @@ import {
 } from './math'
 import { readSvgMetrics, roundVec2, svgCenter } from '../preview/svgMetrics'
 import {
+  MAIN_FILE,
+  activeModel,
+  emptyModel,
+  introducesCycle,
+  replaceActive,
+  validateComponentName
+} from './files'
+import {
   type BooleanKind,
   type BooleanNode,
   type CircleNode,
+  type ComponentInstanceNode,
   type CuboidNode,
   type CylinderNode,
   type EllipseNode,
@@ -41,6 +50,7 @@ import {
   identityTransform,
   isBooleanNode,
   isCircleNode,
+  isComponentNode,
   isCuboidNode,
   isCylinderNode,
   isEllipseNode,
@@ -87,22 +97,48 @@ export interface BooleanResult {
 }
 
 export function createEmptyDocument(name = 'Sem título'): ProjectDocument {
-  return { version: 1, name, units: 'mm', fn: 48, nodes: {}, assets: {} }
+  return {
+    version: 2,
+    name,
+    units: 'mm',
+    fn: 48,
+    activeFile: MAIN_FILE,
+    files: { [MAIN_FILE]: emptyModel() }
+  }
 }
 
 export function referencedSvgAssets(document: ProjectDocument): { id: string; source: string }[] {
-  const ids = new Set<string>()
-  for (const node of Object.values(document.nodes)) {
-    if (isSvgNode(node)) ids.add(node.assetId)
+  const assets = new Map<string, string>()
+  for (const file of Object.values(document.files)) {
+    for (const node of Object.values(file.nodes)) {
+      if (!isSvgNode(node)) continue
+      const asset = file.assets[node.assetId]
+      if (asset) assets.set(asset.id, asset.source)
+    }
   }
-  return [...ids].flatMap((id) => {
-    const asset = document.assets[id]
-    return asset ? [{ id: asset.id, source: asset.source }] : []
-  })
+  return [...assets].map(([id, source]) => ({ id, source }))
 }
 
-export function getRoots(document: ProjectDocument): FeatureNode[] {
-  return Object.values(document.nodes).filter((node) => node.consumedBy === null)
+export function getRoots(document: ProjectDocument, fileName = document.activeFile): FeatureNode[] {
+  const file = document.files[fileName]
+  if (!file) return []
+  return Object.values(file.nodes).filter((node) => node.consumedBy === null)
+}
+
+function nodesOf(document: ProjectDocument): Record<string, FeatureNode> {
+  return activeModel(document).nodes
+}
+
+function assetsOf(document: ProjectDocument): Record<string, SvgAsset> {
+  return activeModel(document).assets
+}
+
+function withModel(
+  document: ProjectDocument,
+  nodes: Record<string, FeatureNode>,
+  assets: Record<string, SvgAsset> = assetsOf(document)
+): ProjectDocument {
+  return replaceActive(document, { nodes, assets })
 }
 
 export function createPrimitive(document: ProjectDocument, kind: PrimitiveKind): CreatedNode {
@@ -111,7 +147,7 @@ export function createPrimitive(document: ProjectDocument, kind: PrimitiveKind):
   const transform = identityTransform()
   transform.position.x = getRoots(document).length * 24
   const appearance = {
-    color: PALETTE[Object.keys(document.nodes).length % PALETTE.length],
+    color: PALETTE[Object.keys(nodesOf(document)).length % PALETTE.length],
     opacity: 1
   }
   const shared = {
@@ -125,7 +161,7 @@ export function createPrimitive(document: ProjectDocument, kind: PrimitiveKind):
   }
   const node = createPrimitiveNode(kind, shared)
   return {
-    document: { ...document, nodes: { ...document.nodes, [id]: node } },
+    document: withModel(document, { ...nodesOf(document), [id]: node }),
     id,
     name
   }
@@ -136,7 +172,7 @@ export function createProfile(document: ProjectDocument, kind: ShapeProfileKind)
   const name = nextName(document, LABELS[kind])
   const node = createProfileNode(kind, featureShell(document, id, name))
   return {
-    document: { ...document, nodes: { ...document.nodes, [id]: node } },
+    document: withModel(document, { ...nodesOf(document), [id]: node }),
     id,
     name
   }
@@ -182,11 +218,11 @@ export function createSvgProfile(
   }
   const asset: SvgAsset = { id: assetId, name: fileName, kind: 'svg', source }
   return {
-    document: {
-      ...document,
-      nodes: { ...document.nodes, [id]: node },
-      assets: { ...document.assets, [assetId]: asset }
-    },
+    document: withModel(
+      document,
+      { ...nodesOf(document), [id]: node },
+      { ...assetsOf(document), [assetId]: asset }
+    ),
     id,
     name,
     error: null
@@ -198,11 +234,12 @@ export function createBoolean(
   kind: BooleanKind,
   selectedIds: string[]
 ): BooleanResult {
-  const unique = [...new Set(selectedIds)].filter((id) => document.nodes[id])
+  const nodes = nodesOf(document)
+  const unique = [...new Set(selectedIds)].filter((id) => nodes[id])
   if (unique.length < 2) {
     return { document, id: null, error: 'Selecione pelo menos dois sólidos.' }
   }
-  if (unique.some((id) => document.nodes[id].consumedBy)) {
+  if (unique.some((id) => nodes[id].consumedBy)) {
     return { document, id: null, error: 'Um sólido já faz parte de outra operação.' }
   }
   for (const id of unique) {
@@ -213,7 +250,7 @@ export function createBoolean(
     }
   }
 
-  const centroid = averagePosition(unique.map((id) => document.nodes[id].transform.position))
+  const centroid = averagePosition(unique.map((id) => nodes[id].transform.position))
   const id = crypto.randomUUID()
   const name = nextName(document, LABELS[kind])
   const booleanNode: BooleanNode = {
@@ -226,12 +263,12 @@ export function createBoolean(
     childIds: unique,
     rounding: 0,
     transform: { position: centroid, rotation: { x: 0, y: 0, z: 0 } },
-    appearance: { ...document.nodes[unique[0]].appearance }
+    appearance: { ...nodes[unique[0]].appearance }
   }
-  const nodes: Record<string, FeatureNode> = { ...document.nodes, [id]: booleanNode }
+  const nextNodes: Record<string, FeatureNode> = { ...nodes, [id]: booleanNode }
   for (const childId of unique) {
-    const child = nodes[childId]
-    nodes[childId] = {
+    const child = nextNodes[childId]
+    nextNodes[childId] = {
       ...child,
       consumedBy: id,
       transform: {
@@ -244,20 +281,21 @@ export function createBoolean(
       }
     }
   }
-  return { document: { ...document, nodes }, id, error: null }
+  return { document: withModel(document, nextNodes), id, error: null }
 }
 
 export function deleteNodes(document: ProjectDocument, ids: string[]): ProjectDocument {
+  const current = nodesOf(document)
   const remove = new Set<string>()
   const visit = (id: string): void => {
-    if (remove.has(id) || !document.nodes[id]) return
+    if (remove.has(id) || !current[id]) return
     remove.add(id)
-    const node = document.nodes[id]
+    const node = current[id]
     if (isBooleanNode(node)) node.childIds.forEach(visit)
   }
   ids.forEach(visit)
 
-  let nodes: Record<string, FeatureNode> = { ...document.nodes }
+  let nodes: Record<string, FeatureNode> = { ...current }
   for (const id of remove) {
     const node = nodes[id]
     const parentId = node.consumedBy
@@ -271,7 +309,7 @@ export function deleteNodes(document: ProjectDocument, ids: string[]): ProjectDo
     delete next[id]
     nodes = next
   }
-  return pruneAssets({ ...document, nodes: repairBooleans(nodes) })
+  return pruneAssets(withModel(document, repairBooleans(nodes)))
 }
 
 export function patchNode(
@@ -279,7 +317,7 @@ export function patchNode(
   id: string,
   patch: FeaturePatch
 ): ProjectDocument {
-  const node = document.nodes[id]
+  const node = nodesOf(document)[id]
   if (!node) return document
   let next: FeatureNode = {
     ...node,
@@ -318,10 +356,17 @@ export function patchNode(
     const limit = booleanRadiusLimit(localBounds(document, node))
     next = { ...next, rounding: Math.min(limit, rounding) }
   }
+  if (isComponentNode(next) && isComponentNode(node)) {
+    next = {
+      ...next,
+      componentName: node.componentName,
+      scale: roundVec(patch.scale ?? node.scale)
+    }
+  }
   if (isProfileNode(next)) {
     next = patchProfile(next, patch)
   }
-  return { ...document, nodes: { ...document.nodes, [id]: next } }
+  return withModel(document, { ...nodesOf(document), [id]: next })
 }
 
 export function setNodeTransform(
@@ -333,10 +378,10 @@ export function setNodeTransform(
 }
 
 export function bakeScale(document: ProjectDocument, id: string, scale: Vec3): ProjectDocument {
-  const node = document.nodes[id]
+  const node = nodesOf(document)[id]
   if (!node || isNearlyOne(scale)) return document
-  const ids = isBooleanNode(node) ? [id, ...collectDescendants(node, document.nodes)] : [id]
-  const nodes = { ...document.nodes }
+  const ids = isBooleanNode(node) ? [id, ...collectDescendants(node, nodesOf(document))] : [id]
+  const nodes = { ...nodesOf(document) }
   for (const targetId of ids) {
     const target = nodes[targetId]
     const position =
@@ -346,7 +391,7 @@ export function bakeScale(document: ProjectDocument, id: string, scale: Vec3): P
     const moved = { ...target, transform: { ...target.transform, position } }
     nodes[targetId] = applyDimensionScale(moved, scale)
   }
-  return { ...document, nodes }
+  return withModel(document, nodes)
 }
 
 export function collectDescendants(
@@ -368,15 +413,16 @@ export function collectDescendants(
 
 export function pruneAssets(document: ProjectDocument): ProjectDocument {
   const used = new Set<string>()
-  for (const node of Object.values(document.nodes)) {
+  for (const node of Object.values(nodesOf(document))) {
     if (isSvgNode(node)) used.add(node.assetId)
   }
+  const current = assetsOf(document)
   const assets: Record<string, SvgAsset> = {}
-  for (const [id, asset] of Object.entries(document.assets)) {
+  for (const [id, asset] of Object.entries(current)) {
     if (used.has(id)) assets[id] = asset
   }
-  if (Object.keys(assets).length === Object.keys(document.assets).length) return document
-  return { ...document, assets }
+  if (Object.keys(assets).length === Object.keys(current).length) return document
+  return withModel(document, nodesOf(document), assets)
 }
 
 function featureShell(
@@ -394,7 +440,7 @@ function featureShell(
     consumedBy: null,
     transform,
     appearance: {
-      color: PALETTE[Object.keys(document.nodes).length % PALETTE.length],
+      color: PALETTE[Object.keys(nodesOf(document)).length % PALETTE.length],
       opacity: 1
     }
   }
@@ -720,6 +766,16 @@ function applyDimensionScale(node: FeatureNode, scale: Vec3): FeatureNode {
     return { ...node, rounding: round3(Math.max(0, node.rounding * factor)) }
   }
   if (isProfileNode(node)) return scaleProfile(node, scale)
+  if (isComponentNode(node)) {
+    return {
+      ...node,
+      scale: {
+        x: round3(node.scale.x * scale.x),
+        y: round3(node.scale.y * scale.y),
+        z: round3(node.scale.z * scale.z)
+      }
+    }
+  }
   return node
 }
 
@@ -752,20 +808,83 @@ function averagePosition(points: Vec3[]): Vec3 {
 }
 
 function nextName(document: ProjectDocument, label: string): string {
-  const count = Object.values(document.nodes).filter((node) => node.name.startsWith(label)).length
+  const count = Object.values(nodesOf(document)).filter((node) =>
+    node.name.startsWith(label)
+  ).length
   return `${label} ${count + 1}`
 }
 
 function isAncestor(document: ProjectDocument, ancestorId: string, nodeId: string): boolean {
+  const nodes = nodesOf(document)
   const seen = new Set<string>()
-  let current = document.nodes[nodeId]
+  let current = nodes[nodeId]
   while (current?.consumedBy) {
     if (current.consumedBy === ancestorId) return true
     if (seen.has(current.consumedBy)) return false
     seen.add(current.consumedBy)
-    current = document.nodes[current.consumedBy]
+    current = nodes[current.consumedBy]
   }
   return false
+}
+
+export interface ComponentFileResult {
+  document: ProjectDocument
+  error: string | null
+}
+
+export function createComponentFile(
+  document: ProjectDocument,
+  rawName: string
+): ComponentFileResult {
+  const error = validateComponentName(document, rawName)
+  if (error) return { document, error }
+  const name = rawName.trim()
+  return {
+    document: {
+      ...document,
+      activeFile: name,
+      files: { ...document.files, [name]: emptyModel() }
+    },
+    error: null
+  }
+}
+
+export function openModelFile(document: ProjectDocument, fileName: string): ProjectDocument {
+  if (!document.files[fileName] || document.activeFile === fileName) return document
+  return { ...document, activeFile: fileName }
+}
+
+export interface ComponentInstanceResult {
+  document: ProjectDocument
+  id: string | null
+  name: string | null
+  error: string | null
+}
+
+export function createComponentInstance(
+  document: ProjectDocument,
+  componentName: string
+): ComponentInstanceResult {
+  if (componentName === MAIN_FILE || !document.files[componentName]) {
+    return { document, id: null, name: null, error: 'Componente não encontrado.' }
+  }
+  if (introducesCycle(document, document.activeFile, componentName)) {
+    return { document, id: null, name: null, error: 'Esse componente criaria um ciclo.' }
+  }
+  const id = crypto.randomUUID()
+  const name = nextName(document, componentName)
+  const node: ComponentInstanceNode = {
+    ...featureShell(document, id, name),
+    kind: 'component',
+    componentName,
+    scale: { x: 1, y: 1, z: 1 }
+  }
+  return {
+    document: withModel(document, { ...nodesOf(document), [id]: node }),
+    id,
+    name,
+    error: null
+  }
 }
 
 function asBoolean(node: FeatureNode | undefined): BooleanNode | null {

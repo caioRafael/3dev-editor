@@ -6,6 +6,7 @@ interface BooleanJob {
   id: number
   document: ProjectDocument
   nodeId: string
+  fileName: string
   contours: Record<string, ContourSet>
 }
 
@@ -31,7 +32,8 @@ const waiters = new Map<number, Waiter>()
 export function requestBooleanMesh(
   document: ProjectDocument,
   nodeId: string,
-  contours: Record<string, ContourSet>
+  contours: Record<string, ContourSet>,
+  fileName = document.activeFile
 ): Promise<SolidMeshData | null> {
   const id = nextId + 1
   nextId = id
@@ -40,7 +42,7 @@ export function requestBooleanMesh(
       waiters.get(latest.id)?.resolve(null)
       waiters.delete(latest.id)
     }
-    latest = { id, document, nodeId, contours }
+    latest = { id, document, nodeId, fileName, contours }
     waiters.set(id, { resolve, reject })
     if (running) dropRunningWork()
     pump()

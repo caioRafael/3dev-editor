@@ -18,6 +18,11 @@ export interface ScadAsset {
   source: string
 }
 
+export interface ScadFile {
+  path: string
+  source: string
+}
+
 export interface SvgFile {
   name: string
   source: string
@@ -51,7 +56,7 @@ export interface SaveProjectRequest {
   filePath: string | null
   documentName: string
   contents: string
-  source: string
+  files: ScadFile[]
   assets: ScadAsset[]
 }
 
@@ -76,11 +81,11 @@ export interface RecentProject {
 
 export interface EditorApi {
   openscadDetect: () => Promise<OpenscadStatus>
-  previewStl: (source: string, assets: ScadAsset[]) => Promise<PreviewStlResult>
+  previewStl: (entry: string, files: ScadFile[], assets: ScadAsset[]) => Promise<PreviewStlResult>
   saveProject: (request: SaveProjectRequest) => Promise<FileResult>
   openProject: () => Promise<OpenProjectResult | null>
-  exportScad: (jsonPath: string, source: string, assets: ScadAsset[]) => Promise<FileResult>
-  exportStl: (jsonPath: string, source: string, assets: ScadAsset[]) => Promise<FileResult>
+  exportScad: (jsonPath: string, files: ScadFile[], assets: ScadAsset[]) => Promise<FileResult>
+  exportStl: (jsonPath: string, files: ScadFile[], assets: ScadAsset[]) => Promise<FileResult>
   pickSvg: () => Promise<SvgFile | null>
   listProjectTree: (jsonPath: string) => Promise<ProjectTree | null>
   listRecentProjects: () => Promise<RecentProject[]>
@@ -91,13 +96,21 @@ export function isScadAssetList(value: unknown): value is ScadAsset[] {
   return Array.isArray(value) && value.every((item) => isScadAsset(item))
 }
 
+export function isScadFileList(value: unknown): value is ScadFile[] {
+  return Array.isArray(value) && value.length > 0 && value.every((item) => isScadFile(item))
+}
+
+export function isProjectScadPath(path: string): boolean {
+  return path === 'main.scad' || /^components\/[A-Za-z_][A-Za-z0-9_]*\.scad$/.test(path)
+}
+
 export function isSaveProjectRequest(value: unknown): value is SaveProjectRequest {
   if (typeof value !== 'object' || value === null) return false
   if (
     !('filePath' in value) ||
     !('documentName' in value) ||
     !('contents' in value) ||
-    !('source' in value) ||
+    !('files' in value) ||
     !('assets' in value)
   ) {
     return false
@@ -107,8 +120,18 @@ export function isSaveProjectRequest(value: unknown): value is SaveProjectReques
     filePathOk &&
     typeof value.documentName === 'string' &&
     typeof value.contents === 'string' &&
-    typeof value.source === 'string' &&
+    isScadFileList(value.files) &&
     isScadAssetList(value.assets)
+  )
+}
+
+function isScadFile(value: unknown): value is ScadFile {
+  if (typeof value !== 'object' || value === null) return false
+  if (!('path' in value) || !('source' in value)) return false
+  return (
+    typeof value.path === 'string' &&
+    isProjectScadPath(value.path) &&
+    typeof value.source === 'string'
   )
 }
 

@@ -24,7 +24,8 @@ describe('project layout', () => {
   it('places the document at the root, the source in code and the mesh in output', () => {
     const paths = projectPaths('/projetos/Lamp.3dev', 'Lamp')
     expect(paths.jsonPath).toBe(join('/projetos/Lamp.3dev', 'Lamp.3dev.json'))
-    expect(paths.scadPath).toBe(join('/projetos/Lamp.3dev', 'code', 'Lamp.scad'))
+    expect(paths.scadPath).toBe(join('/projetos/Lamp.3dev', 'code', 'main.scad'))
+    expect(paths.componentsDirectory).toBe(join('/projetos/Lamp.3dev', 'code', 'components'))
     expect(paths.stlPath).toBe(join('/projetos/Lamp.3dev', 'output', 'Lamp.stl'))
     expect(paths.codeDirectory).toBe(join('/projetos/Lamp.3dev', 'code'))
     expect(paths.outputDirectory).toBe(join('/projetos/Lamp.3dev', 'output'))
