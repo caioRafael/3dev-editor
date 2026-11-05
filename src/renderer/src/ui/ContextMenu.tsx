@@ -2,6 +2,13 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { componentNames } from '../document/files'
 import { useEditor } from '../document/store'
+import {
+  componentTip,
+  tipForPrimitive,
+  tipForProfile,
+  tipForSvg,
+  useFunctionTip
+} from './functionTips'
 import { PRIMITIVES, PROFILES } from './shapeCatalog'
 
 const MENU_WIDTH = 176
@@ -64,6 +71,7 @@ export function ContextMenu({
         <MenuRow
           key={item.kind}
           label={item.label}
+          onHover={() => useFunctionTip.getState().show(tipForPrimitive(item.kind))}
           onClick={() => useEditor.getState().addPrimitive(item.kind)}
           close={onClose}
         />
@@ -72,11 +80,17 @@ export function ContextMenu({
         <MenuRow
           key={item.kind}
           label={item.label}
+          onHover={() => useFunctionTip.getState().show(tipForProfile(item.kind))}
           onClick={() => useEditor.getState().addProfile(item.kind)}
           close={onClose}
         />
       ))}
-      <MenuRow label="SVG" onClick={() => void importSvg()} close={onClose} />
+      <MenuRow
+        label="SVG"
+        onHover={() => useFunctionTip.getState().show(tipForSvg())}
+        onClick={() => void importSvg()}
+        close={onClose}
+      />
       <p className="px-2 pt-2 text-[10px] tracking-wide text-[#8b93a3] uppercase">
         Adicionar componente
       </p>
@@ -87,6 +101,7 @@ export function ContextMenu({
           <MenuRow
             key={name}
             label={name}
+            onHover={() => useFunctionTip.getState().show(componentTip(name))}
             onClick={() => useEditor.getState().addComponent(name)}
             close={onClose}
           />
@@ -116,10 +131,12 @@ function placeContextMenu(x: number, y: number, width: number, height: number): 
 
 function MenuRow({
   label,
+  onHover,
   onClick,
   close
 }: {
   label: string
+  onHover?: () => void
   onClick: () => void
   close: () => void
 }): React.JSX.Element {
@@ -128,6 +145,8 @@ function MenuRow({
       type="button"
       role="menuitem"
       className="block w-full rounded-md px-2 py-1 text-left text-[12px] text-[#d5d8e0] hover:bg-[#2a3040]"
+      onMouseEnter={onHover}
+      onFocus={onHover}
       onClick={() => {
         close()
         onClick()

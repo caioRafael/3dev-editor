@@ -4,6 +4,7 @@ import { Grid, OrbitControls } from '@react-three/drei'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { MOUSE, type Group } from 'three'
 import { ContextMenu } from '../ui/ContextMenu'
+import { FunctionTip } from '../ui/FunctionTip'
 import { useEditor } from '../document/store'
 import { getRoots } from '../document/tree'
 import { ExactPreview } from './ExactPreview'
@@ -16,7 +17,7 @@ function PreviewActivity(): React.JSX.Element | null {
   if (!label || pending === 0) return null
   return (
     <div
-      className="pointer-events-none absolute right-3 bottom-3 z-10 flex items-center gap-2 rounded-md border border-[#2c3240] bg-[#1b1e27]/95 px-3 py-2 text-[12px] text-[#e7e9ee]"
+      className="flex items-center gap-2 rounded-md border border-[#2c3240] bg-[#1b1e27]/95 px-3 py-2 text-[12px] text-[#e7e9ee]"
       role="status"
     >
       <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#3a4152] border-t-[#d97757]" />
@@ -56,7 +57,10 @@ export function Viewport(): React.JSX.Element {
         setMenu({ x: event.clientX, y: event.clientY })
       }}
     >
-      <PreviewActivity />
+      <div className="pointer-events-none absolute right-3 bottom-3 z-10 flex flex-col items-end gap-2">
+        <FunctionTip />
+        <PreviewActivity />
+      </div>
       {menu ? <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} /> : null}
       <ViewportInteractionContext.Provider value={interaction}>
         <Canvas

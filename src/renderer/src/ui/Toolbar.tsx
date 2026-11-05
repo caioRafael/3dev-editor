@@ -33,6 +33,17 @@ import {
 } from '../document/types'
 import { componentNames } from '../document/files'
 import { useEditor } from '../document/store'
+import {
+  componentTip,
+  tipForBoolean,
+  tipForMenu,
+  tipForOperation,
+  tipForPrimitive,
+  tipForProfile,
+  tipForSvg,
+  tipForTool,
+  useFunctionTip
+} from './functionTips'
 import { PRIMITIVES, PROFILES } from './shapeCatalog'
 
 const MODES: { tool: EditorTool; label: string; icon: LucideIcon }[] = [
@@ -90,17 +101,26 @@ export function Toolbar(): React.JSX.Element {
           icon={item.icon}
           active={tool === item.tool}
           pressed={tool === item.tool}
+          onHover={() => useFunctionTip.getState().show(tipForTool(item.tool))}
           onClick={() => useEditor.getState().setTool(item.tool)}
         />
       ))}
       <Divider />
-      <ToolbarMenu id="shapes" label="Formas" icon={Shapes} menu={menu} setMenu={setMenu}>
+      <ToolbarMenu
+        id="shapes"
+        label="Formas"
+        icon={Shapes}
+        menu={menu}
+        setMenu={setMenu}
+        onHover={() => useFunctionTip.getState().show(tipForMenu('shapes'))}
+      >
         <p className="px-2 pt-1 text-[10px] tracking-wide text-[#8b93a3] uppercase">3D</p>
         {PRIMITIVES.map((item) => (
           <MenuItem
             key={item.kind}
             label={item.label}
             icon={item.icon}
+            onHover={() => useFunctionTip.getState().show(tipForPrimitive(item.kind))}
             onClick={() => useEditor.getState().addPrimitive(item.kind)}
             close={close}
           />
@@ -111,11 +131,18 @@ export function Toolbar(): React.JSX.Element {
             key={item.kind}
             label={item.label}
             icon={item.icon}
+            onHover={() => useFunctionTip.getState().show(tipForProfile(item.kind))}
             onClick={() => useEditor.getState().addProfile(item.kind)}
             close={close}
           />
         ))}
-        <MenuItem label="SVG" icon={Spline} onClick={() => void importSvg()} close={close} />
+        <MenuItem
+          label="SVG"
+          icon={Spline}
+          onHover={() => useFunctionTip.getState().show(tipForSvg())}
+          onClick={() => void importSvg()}
+          close={close}
+        />
       </ToolbarMenu>
       <ToolbarMenu
         id="components"
@@ -123,6 +150,7 @@ export function Toolbar(): React.JSX.Element {
         icon={Component}
         menu={menu}
         setMenu={setMenu}
+        onHover={() => useFunctionTip.getState().show(tipForMenu('components'))}
       >
         {components.length === 0 ? (
           <p className="px-2 py-1.5 text-[12px] text-[#8b93a3]">Nenhum componente</p>
@@ -132,6 +160,7 @@ export function Toolbar(): React.JSX.Element {
               key={name}
               label={name}
               icon={Component}
+              onHover={() => useFunctionTip.getState().show(componentTip(name))}
               onClick={() => useEditor.getState().addComponent(name)}
               close={close}
             />
@@ -146,6 +175,7 @@ export function Toolbar(): React.JSX.Element {
         menu={menu}
         setMenu={setMenu}
         highlighted={solidActive}
+        onHover={() => useFunctionTip.getState().show(tipForMenu('solid'))}
       >
         <p className="px-2 pt-1 text-[10px] tracking-wide text-[#8b93a3] uppercase">Booleanos</p>
         {BOOLEANS.map((item) => (
@@ -154,6 +184,7 @@ export function Toolbar(): React.JSX.Element {
             label={item.label}
             icon={item.icon}
             active={activeGroup === item.kind}
+            onHover={() => useFunctionTip.getState().show(tipForBoolean(item.kind))}
             onClick={() => useEditor.getState().applyBoolean(item.kind)}
             close={close}
           />
@@ -165,6 +196,7 @@ export function Toolbar(): React.JSX.Element {
             label={item.label}
             icon={item.icon}
             active={activeGroup === item.kind}
+            onHover={() => useFunctionTip.getState().show(tipForOperation(item.kind))}
             onClick={() => useEditor.getState().applyOperation(item.kind)}
             close={close}
           />
@@ -177,6 +209,7 @@ export function Toolbar(): React.JSX.Element {
         menu={menu}
         setMenu={setMenu}
         highlighted={flatActive}
+        onHover={() => useFunctionTip.getState().show(tipForMenu('flat'))}
       >
         {FLAT_OPERATIONS.map((item) => (
           <MenuItem
@@ -184,6 +217,7 @@ export function Toolbar(): React.JSX.Element {
             label={item.label}
             icon={item.icon}
             active={activeGroup === item.kind}
+            onHover={() => useFunctionTip.getState().show(tipForOperation(item.kind))}
             onClick={() => useEditor.getState().applyOperation(item.kind)}
             close={close}
           />
@@ -200,6 +234,7 @@ function ToolbarMenu({
   menu,
   setMenu,
   highlighted = false,
+  onHover,
   children
 }: {
   id: ToolbarMenuId
@@ -208,6 +243,7 @@ function ToolbarMenu({
   menu: ToolbarMenuId | null
   setMenu: (menu: ToolbarMenuId | null) => void
   highlighted?: boolean
+  onHover?: () => void
   children: React.ReactNode
 }): React.JSX.Element {
   const open = menu === id
@@ -247,6 +283,7 @@ function ToolbarMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={menuId}
+        onHover={onHover}
         onClick={() => setMenu(open ? null : id)}
       />
       {open ? (
@@ -264,6 +301,7 @@ function IconButton({
   active = false,
   pressed,
   showTooltip = true,
+  onHover,
   onClick,
   ...buttonProps
 }: {
@@ -272,6 +310,7 @@ function IconButton({
   active?: boolean
   pressed?: boolean
   showTooltip?: boolean
+  onHover?: () => void
   onClick: () => void
 } & Pick<
   React.ButtonHTMLAttributes<HTMLButtonElement>,
@@ -283,6 +322,8 @@ function IconButton({
       className={buttonClass(active)}
       aria-label={label}
       aria-pressed={pressed}
+      onMouseEnter={onHover}
+      onFocus={onHover}
       onClick={onClick}
       {...buttonProps}
     >
@@ -390,12 +431,14 @@ function MenuItem({
   label,
   icon: Icon,
   active = false,
+  onHover,
   onClick,
   close
 }: {
   label: string
   icon: LucideIcon
   active?: boolean
+  onHover?: () => void
   onClick: () => void
   close: () => void
 }): React.JSX.Element {
@@ -407,6 +450,8 @@ function MenuItem({
       className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] hover:bg-[#2a3040] ${
         active ? 'bg-[#3a2a24] text-[#f2d2c4]' : 'text-[#d5d8e0]'
       }`}
+      onMouseEnter={onHover}
+      onFocus={onHover}
       onClick={() => {
         close()
         onClick()
