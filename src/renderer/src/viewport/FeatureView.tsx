@@ -5,12 +5,14 @@ import { MathUtils, type Group } from 'three'
 import { useEditor } from '../document/store'
 import {
   type FeatureNode,
-  isBooleanNode,
   isComponentNode,
   isCuboidNode,
   isCylinderNode,
+  isGroupEnabled,
+  isGroupNode,
   isProfileNode,
-  isSphereNode
+  isSphereNode,
+  showsInactiveChildren
 } from '../document/types'
 import { round3 } from '../document/math'
 import { useBooleanGeometry } from '../preview/useBooleanGeometry'
@@ -34,6 +36,12 @@ export function FeatureView({
     return state.document.files[owner]?.nodes[id]
   })
   const selected = useEditor((state) => state.selection.includes(selectId ?? id))
+  const revealed = useEditor((state) => {
+    const owner = fileName ?? state.document.activeFile
+    const nodes = state.document.files[owner]?.nodes
+    if (!nodes || !node) return false
+    return showsInactiveChildren(nodes, node)
+  })
   const previewMode = useEditor((state) => state.previewMode)
   const segments = useEditor((state) => Math.max(8, Math.min(128, Math.round(state.document.fn))))
   const groupRef = useRef<Group>(null)
@@ -66,8 +74,9 @@ export function FeatureView({
   if (!node || !node.visible) return null
   const nested = selectId !== undefined
   const picking = selectId ?? id
-  const showMesh = !node.consumedBy || selected
-  const interactive = previewMode === 'fast' && !node.consumedBy && !nested
+  const showMesh = !node.consumedBy || selected || revealed
+  const interactive = previewMode === 'fast' && (!node.consumedBy || revealed) && !nested
+  const groupActive = !isGroupNode(node) || isGroupEnabled(node)
 
   return (
     <group ref={groupRef}>
@@ -76,7 +85,7 @@ export function FeatureView({
           <ComponentBodies componentName={node.componentName} selectId={picking} />
         </group>
       ) : null}
-      {showMesh && isBooleanNode(node) ? (
+      {showMesh && isGroupNode(node) && groupActive ? (
         <BooleanMesh
           node={node}
           fileName={fileName}
@@ -91,21 +100,21 @@ export function FeatureView({
           selected={selected && !nested}
           interactive={interactive || nested}
           segments={segments}
-          ghost={Boolean(node.consumedBy)}
+          ghost={Boolean(node.consumedBy) && !revealed}
           selectId={picking}
         />
       ) : null}
-      {showMesh && !isBooleanNode(node) && !isProfileNode(node) && !isComponentNode(node) ? (
+      {showMesh && (isCuboidNode(node) || isCylinderNode(node) || isSphereNode(node)) ? (
         <PrimitiveMesh
           node={node}
           selected={selected && !nested}
           interactive={interactive || nested}
           segments={segments}
-          ghost={Boolean(node.consumedBy)}
+          ghost={Boolean(node.consumedBy) && !revealed}
           selectId={picking}
         />
       ) : null}
-      {isBooleanNode(node)
+      {isGroupNode(node)
         ? node.childIds.map((childId) => (
             <FeatureView key={childId} id={childId} fileName={fileName} selectId={selectId} />
           ))

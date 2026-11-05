@@ -1,7 +1,7 @@
 import { activeModel } from '../document/files'
 import { useEditor } from '../document/store'
 import { getRoots } from '../document/tree'
-import { isBooleanNode } from '../document/types'
+import { isGroupEnabled, isGroupNode } from '../document/types'
 
 export function Outliner(): React.JSX.Element {
   const document = useEditor((state) => state.document)
@@ -36,7 +36,9 @@ function OutlinerNode({ id, depth }: { id: string; depth: number }): React.JSX.E
       >
         <button
           type="button"
-          className="min-w-0 flex-1 truncate px-1 py-1 text-left text-[12px]"
+          className={`min-w-0 flex-1 truncate px-1 py-1 text-left text-[12px] ${
+            isGroupNode(node) && !isGroupEnabled(node) ? 'text-[#8b93a3]' : ''
+          }`}
           onClick={(event) => useEditor.getState().select(id, { additive: event.shiftKey })}
         >
           <span
@@ -45,6 +47,16 @@ function OutlinerNode({ id, depth }: { id: string; depth: number }): React.JSX.E
           />
           {node.name}
         </button>
+        {isGroupNode(node) ? (
+          <button
+            type="button"
+            className="px-1 text-[11px] text-[#9aa3b2]"
+            aria-label={isGroupEnabled(node) ? 'Desativar' : 'Ativar'}
+            onClick={() => useEditor.getState().updateNode(id, { enabled: !isGroupEnabled(node) })}
+          >
+            {isGroupEnabled(node) ? 'Ativa' : 'Inativa'}
+          </button>
+        ) : null}
         <button
           type="button"
           className="px-1 text-[11px] text-[#9aa3b2]"
@@ -54,7 +66,7 @@ function OutlinerNode({ id, depth }: { id: string; depth: number }): React.JSX.E
           {node.visible ? 'Ver' : 'Oculto'}
         </button>
       </div>
-      {isBooleanNode(node)
+      {isGroupNode(node)
         ? node.childIds.map((childId) => (
             <OutlinerNode key={childId} id={childId} depth={depth + 1} />
           ))

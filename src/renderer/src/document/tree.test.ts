@@ -6,6 +6,7 @@ import {
   createComponentFile,
   createComponentInstance,
   createEmptyDocument,
+  createOperation,
   createPrimitive,
   createProfile,
   createSvgProfile,
@@ -112,6 +113,35 @@ describe('document tree', () => {
     expect(profile.extrusion.height).toBe(12)
   })
 
+  it('removes a boolean and keeps both solids', () => {
+    const first = createPrimitive(createEmptyDocument(), 'cuboid')
+    const second = createPrimitive(first.document, 'sphere')
+    const result = createBoolean(second.document, 'union', [first.id, second.id])
+    const booleanId = result.id
+    if (!booleanId) throw new Error('expected boolean')
+    const original = activeModel(second.document).nodes[first.id].transform.position
+    const next = deleteNodes(result.document, [booleanId])
+    const nodes = activeModel(next).nodes
+    expect(nodes[booleanId]).toBeUndefined()
+    expect(nodes[first.id].consumedBy).toBeNull()
+    expect(nodes[second.id].consumedBy).toBeNull()
+    expect(nodes[first.id].transform.position).toEqual(original)
+  })
+
+  it('turns an operation off without removing its child', () => {
+    const profile = createProfile(createEmptyDocument(), 'circle')
+    const offset = createOperation(profile.document, 'offset', [profile.id])
+    const offsetId = offset.id
+    if (!offsetId) throw new Error('expected offset')
+    const disabled = patchNode(offset.document, offsetId, { enabled: false })
+    const node = activeModel(disabled).nodes[offsetId]
+    expect(node?.enabled).toBe(false)
+    expect(activeModel(disabled).nodes[profile.id]).toBeDefined()
+    const removed = deleteNodes(disabled, [offsetId])
+    expect(activeModel(removed).nodes[offsetId]).toBeUndefined()
+    expect(activeModel(removed).nodes[profile.id].consumedBy).toBeNull()
+  })
+
   it('unwraps a boolean that no longer has two children', () => {
     const first = createPrimitive(createEmptyDocument(), 'sphere')
     const second = createPrimitive(first.document, 'sphere')
@@ -126,6 +156,20 @@ describe('document tree', () => {
 })
 
 describe('editor store', () => {
+  it('deactivates the selected operation when the same action is used again', () => {
+    useEditor.getState().newDocument()
+    useEditor.getState().addProfile('circle')
+    const profileId = useEditor.getState().selection[0]
+    useEditor.getState().applyOperation('offset')
+    const offsetId = useEditor.getState().selection[0]
+    expect(offsetId).not.toBe(profileId)
+    useEditor.getState().applyOperation('offset')
+    expect(activeModel(useEditor.getState().document).nodes[offsetId]?.enabled).toBe(false)
+    expect(activeModel(useEditor.getState().document).nodes[profileId]).toBeDefined()
+    useEditor.getState().applyOperation('offset')
+    expect(activeModel(useEditor.getState().document).nodes[offsetId]?.enabled).toBe(true)
+  })
+
   it('undoes and redoes primitive creation', () => {
     useEditor.getState().newDocument()
     useEditor.getState().addPrimitive('cuboid')
@@ -134,6 +178,35 @@ describe('editor store', () => {
     expect(Object.keys(activeModel(useEditor.getState().document).nodes)).toHaveLength(0)
     useEditor.getState().redo()
     expect(Object.keys(activeModel(useEditor.getState().document).nodes)).toHaveLength(1)
+  })
+})
+
+describe('operations', () => {
+  it('offsets a profile and rejects a solid', () => {
+    const profile = createProfile(createEmptyDocument(), 'circle')
+    const offset = createOperation(profile.document, 'offset', [profile.id])
+    expect(offset.error).toBeNull()
+    const node = activeModel(offset.document).nodes[offset.id ?? '']
+    expect(node?.kind).toBe('offset')
+    if (node?.kind !== 'offset') return
+    expect(node.childIds).toEqual([profile.id])
+    expect(node.mode).toBe('radius')
+    expect(node.distance).toBe(1)
+    expect(activeModel(offset.document).nodes[profile.id].consumedBy).toBe(offset.id)
+
+    const solid = createPrimitive(createEmptyDocument(), 'cuboid')
+    const rejected = createOperation(solid.document, 'offset', [solid.id])
+    expect(rejected.id).toBeNull()
+    expect(rejected.error).toContain('perfis')
+  })
+
+  it('requires two solids for a 3D hull and one profile for a revolve', () => {
+    const first = createPrimitive(createEmptyDocument(), 'cuboid')
+    expect(createOperation(first.document, 'hull', [first.id]).error).toContain('dois')
+    const profile = createProfile(createEmptyDocument(), 'rect')
+    const revolve = createOperation(profile.document, 'revolve', [profile.id])
+    expect(revolve.error).toBeNull()
+    expect(activeModel(revolve.document).nodes[revolve.id ?? '']?.kind).toBe('revolve')
   })
 })
 

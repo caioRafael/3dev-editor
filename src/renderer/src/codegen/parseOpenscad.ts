@@ -13,9 +13,20 @@ import {
   type EllipseNode,
   type Extrusion,
   type FeatureNode,
+  type GroupNode,
+  type Hull2dNode,
+  type HullNode,
+  type MinkowskiNode,
+  type MirrorAxis,
+  type MirrorNode,
   type NgonNode,
+  type OffsetMode,
+  type OffsetNode,
   type ProjectDocument,
+  type ProjectionNode,
   type RectNode,
+  type ResizeNode,
+  type RevolveNode,
   type SphereNode,
   type StarNode,
   type SvgNode,
@@ -28,6 +39,7 @@ import {
   DEFAULT_COLOR,
   DEFAULT_FONT,
   MIN_SIZE,
+  defaultExtrusion,
   identityTransform,
   isBooleanNode,
   isCircleNode,
@@ -35,9 +47,18 @@ import {
   isCuboidNode,
   isCylinderNode,
   isEllipseNode,
+  isGroupNode,
+  isHull2dNode,
+  isHullNode,
+  isMinkowskiNode,
+  isMirrorNode,
   isNgonNode,
+  isOffsetNode,
   isProfileNode,
+  isProjectionNode,
   isRectNode,
+  isResizeNode,
+  isRevolveNode,
   isSphereNode,
   isStarNode,
   isSvgNode,
@@ -58,7 +79,15 @@ const LABELS: Record<ParsedNode['kind'], string> = {
   star: 'Estrela',
   text: 'Texto',
   svg: 'SVG',
-  component: 'Componente'
+  component: 'Componente',
+  offset: 'Offset',
+  hull2d: 'Casca 2D',
+  hull: 'Casca 3D',
+  mirror: 'Espelho',
+  revolve: 'Revolução',
+  projection: 'Projeção',
+  resize: 'Redimensionar',
+  minkowski: 'Minkowski'
 }
 
 const ASSET_PATH =
@@ -97,6 +126,7 @@ interface ParsedBase {
   column: number
   transform: Transform
   appearance: Appearance
+  keepExtrusion?: boolean
 }
 
 interface ParsedCuboid extends ParsedBase {
@@ -128,6 +158,70 @@ interface ParsedComponent extends ParsedBase {
   componentName: string
   scale: Vec3
 }
+
+interface ParsedOffset extends ParsedBase {
+  kind: 'offset'
+  mode: OffsetMode
+  distance: number
+  chamfer: boolean
+  extrusion: Extrusion
+  children: ParsedNode[]
+}
+
+interface ParsedHull2d extends ParsedBase {
+  kind: 'hull2d'
+  extrusion: Extrusion
+  children: ParsedNode[]
+}
+
+interface ParsedHull extends ParsedBase {
+  kind: 'hull'
+  children: ParsedNode[]
+}
+
+interface ParsedMirror extends ParsedBase {
+  kind: 'mirror'
+  axis: MirrorAxis
+  children: ParsedNode[]
+}
+
+interface ParsedRevolve extends ParsedBase {
+  kind: 'revolve'
+  angle: number
+  start: number
+  children: ParsedNode[]
+}
+
+interface ParsedProjection extends ParsedBase {
+  kind: 'projection'
+  cut: boolean
+  extrusion: Extrusion
+  children: ParsedNode[]
+}
+
+interface ParsedResize extends ParsedBase {
+  kind: 'resize'
+  size: Vec3
+  auto: boolean
+  children: ParsedNode[]
+}
+
+interface ParsedMinkowski extends ParsedBase {
+  kind: 'minkowski'
+  children: ParsedNode[]
+}
+
+type ParsedOperation =
+  | ParsedOffset
+  | ParsedHull2d
+  | ParsedHull
+  | ParsedMirror
+  | ParsedRevolve
+  | ParsedProjection
+  | ParsedResize
+  | ParsedMinkowski
+
+type ParsedFlatOperation = ParsedOffset | ParsedHull2d | ParsedProjection
 
 interface ParsedRect extends ParsedBase {
   kind: 'rect'
@@ -187,7 +281,13 @@ type ParsedProfile =
   ParsedRect | ParsedCircle | ParsedEllipse | ParsedNgon | ParsedStar | ParsedText | ParsedSvg
 
 type ParsedNode =
-  ParsedCuboid | ParsedCylinder | ParsedSphere | ParsedBoolean | ParsedProfile | ParsedComponent
+  | ParsedCuboid
+  | ParsedCylinder
+  | ParsedSphere
+  | ParsedBoolean
+  | ParsedProfile
+  | ParsedComponent
+  | ParsedOperation
 
 interface ColorModifier {
   kind: 'color'
@@ -382,13 +482,18 @@ function parseShape(parser: Parser, previous: ProjectDocument): ParsedNode {
   const token = peek(parser)
   if (token.kind !== 'ident') fail(parser, `Construção não suportada: ${describe(token)}.`)
   if (token.value === 'round3d') return parseRound3d(parser, previous)
-  if (token.value === 'linear_extrude') return parseExtrusion(parser)
+  if (token.value === 'linear_extrude') return parseExtrusion(parser, previous)
   if (token.value === 'cuboid') return parseCuboid(parser)
   if (token.value === 'cyl') return parseCylinder(parser)
   if (token.value === 'spheroid') return parseSphere(parser)
   if (token.value === 'union' || token.value === 'difference' || token.value === 'intersection') {
     return parseBoolean(parser, token.value, previous)
   }
+  if (token.value === 'rotate_extrude') return parseRevolve(parser, previous)
+  if (token.value === 'mirror') return parseMirror(parser, previous)
+  if (token.value === 'resize') return parseResize(parser, previous)
+  if (token.value === 'minkowski') return parseMinkowski(parser, previous)
+  if (token.value === 'hull') return parseHull3d(parser, previous)
   if (token.value !== MAIN_FILE && previous.files[token.value]) {
     return parseComponentCall(parser, token.value)
   }
@@ -412,9 +517,8 @@ function instantiatedComponents(nodes: ParsedNode[]): Set<string> {
   const names = new Set<string>()
   const walk = (node: ParsedNode): void => {
     if (node.kind === 'component') names.add(node.componentName)
-    if (node.kind === 'union' || node.kind === 'difference' || node.kind === 'intersection') {
-      node.children.forEach(walk)
-    }
+    const children = parsedChildren(node)
+    if (children) children.forEach(walk)
   }
   nodes.forEach(walk)
   return names
@@ -499,7 +603,10 @@ function parseSphere(parser: Parser): ParsedSphere {
   return { ...blankShape(token), kind: 'sphere', diameter }
 }
 
-function parseExtrusion(parser: Parser): ParsedProfile {
+function parseExtrusion(
+  parser: Parser,
+  previous: ProjectDocument
+): ParsedProfile | ParsedFlatOperation {
   const token = expectIdent(parser, 'linear_extrude')
   const args = parseArgs(parser)
   let height: number | null = null
@@ -524,10 +631,21 @@ function parseExtrusion(parser: Parser): ParsedProfile {
   if (height === null) failToken(token, 'linear_extrude precisa de height.')
   if (!centered) failToken(token, 'linear_extrude precisa de center=true.')
   expectPunct(parser, '{')
+  const extrusion = { height, twist, scale }
+  const body = nextShapeIdent(parser)
+  if (body === 'offset' || body === 'hull' || body === 'projection') {
+    const operation = parseFlatStatement(parser, previous)
+    expectPunct(parser, '}')
+    if (isPunct(parser, ';')) eat(parser)
+    if (!isParsedFlatOperation(operation)) {
+      failToken(token, 'linear_extrude precisa de um perfil ou de uma operação 2D.')
+    }
+    return { ...operation, extrusion, keepExtrusion: false }
+  }
   const profile = parseProfile(parser)
   expectPunct(parser, '}')
   if (isPunct(parser, ';')) eat(parser)
-  return { ...profile, extrusion: { height, twist, scale } }
+  return { ...profile, extrusion, keepExtrusion: false }
 }
 
 function parseProfile(parser: Parser): ParsedProfile {
@@ -729,6 +847,271 @@ function blankProfile(token: Token): ParsedBase & { extrusion: Extrusion } {
   }
 }
 
+function nextShapeIdent(parser: Parser): string | null {
+  const start = parser.index
+  while (isModifier(parser)) {
+    if (!skipCall(parser)) {
+      parser.index = start
+      return null
+    }
+  }
+  const token = peek(parser)
+  parser.index = start
+  return token.kind === 'ident' ? token.value : null
+}
+
+function skipCall(parser: Parser): boolean {
+  eat(parser)
+  if (!isPunct(parser, '(')) return false
+  let depth = 0
+  while (!isEof(parser)) {
+    const token = eat(parser)
+    if (token.kind === 'punct' && token.value === '(') depth += 1
+    if (token.kind === 'punct' && token.value === ')') {
+      depth -= 1
+      if (depth === 0) return true
+    }
+  }
+  return false
+}
+
+function parseFlatStatement(parser: Parser, previous: ProjectDocument): ParsedNode {
+  const modifiers: Modifier[] = []
+  while (isModifier(parser)) modifiers.push(parseModifier(parser))
+  validateModifierOrder(modifiers)
+  return applyModifiers(parseFlatShape(parser, previous), modifiers)
+}
+
+function parseFlatShape(parser: Parser, previous: ProjectDocument): ParsedNode {
+  const token = peek(parser)
+  if (token.kind !== 'ident') fail(parser, `Construção não suportada: ${describe(token)}.`)
+  if (token.value === 'offset') return parseOffset(parser, previous)
+  if (token.value === 'hull') return parseHull2d(parser, previous)
+  if (token.value === 'projection') return parseProjection(parser, previous)
+  const profile = parseProfile(parser)
+  return { ...profile, keepExtrusion: true }
+}
+
+function parseFlatBlock(
+  parser: Parser,
+  previous: ProjectDocument,
+  token: Token,
+  minimum: number,
+  message: string
+): ParsedNode[] {
+  expectPunct(parser, '{')
+  const children: ParsedNode[] = []
+  while (!isPunct(parser, '}') && !isEof(parser))
+    children.push(parseFlatStatement(parser, previous))
+  expectPunct(parser, '}')
+  if (isPunct(parser, ';')) eat(parser)
+  if (children.length < minimum) failToken(token, message)
+  return children
+}
+
+function parseSolidBlock(
+  parser: Parser,
+  previous: ProjectDocument,
+  token: Token,
+  minimum: number,
+  message: string
+): ParsedNode[] {
+  expectPunct(parser, '{')
+  const children: ParsedNode[] = []
+  while (!isPunct(parser, '}') && !isEof(parser)) children.push(parseStatement(parser, previous))
+  expectPunct(parser, '}')
+  if (isPunct(parser, ';')) eat(parser)
+  if (children.length < minimum) failToken(token, message)
+  return children
+}
+
+function parseOffset(parser: Parser, previous: ProjectDocument): ParsedOffset {
+  const token = expectIdent(parser, 'offset')
+  const args = parseArgs(parser)
+  let mode: OffsetMode | null = null
+  let distance: number | null = null
+  let chamfer = false
+  for (const arg of args) {
+    if (arg.name === 'r') {
+      if (mode) failToken(arg.value.token, 'offset aceita r ou delta, não os dois.')
+      mode = 'radius'
+      distance = requireFiniteNumber(arg.value, 'r')
+    } else if (arg.name === 'delta') {
+      if (mode) failToken(arg.value.token, 'offset aceita r ou delta, não os dois.')
+      mode = 'delta'
+      distance = requireFiniteNumber(arg.value, 'delta')
+    } else if (arg.name === 'chamfer') {
+      chamfer = requireBoolean(arg.value, 'chamfer')
+    } else {
+      failToken(arg.value.token, `Argumento não suportado em offset: ${arg.name ?? 'posicional'}.`)
+    }
+  }
+  if (!mode || distance === null) failToken(token, 'offset precisa de r ou delta.')
+  if (chamfer && mode !== 'delta') failToken(token, 'chamfer só vale com delta.')
+  const children = parseFlatBlock(
+    parser,
+    previous,
+    token,
+    1,
+    'offset precisa de pelo menos um perfil.'
+  )
+  return {
+    ...blankShape(token),
+    kind: 'offset',
+    mode,
+    distance,
+    chamfer,
+    extrusion: defaultExtrusion(),
+    keepExtrusion: true,
+    children
+  }
+}
+
+function parseHull2d(parser: Parser, previous: ProjectDocument): ParsedHull2d {
+  const token = expectIdent(parser, 'hull')
+  expectPunct(parser, '(')
+  expectPunct(parser, ')')
+  const children = parseFlatBlock(
+    parser,
+    previous,
+    token,
+    2,
+    'A casca 2D precisa de pelo menos dois perfis.'
+  )
+  return {
+    ...blankShape(token),
+    kind: 'hull2d',
+    extrusion: defaultExtrusion(),
+    keepExtrusion: true,
+    children
+  }
+}
+
+function parseProjection(parser: Parser, previous: ProjectDocument): ParsedProjection {
+  const token = expectIdent(parser, 'projection')
+  const args = parseArgs(parser)
+  let cut = false
+  for (const arg of args) {
+    if (arg.name === 'cut') cut = requireBoolean(arg.value, 'cut')
+    else
+      failToken(
+        arg.value.token,
+        `Argumento não suportado em projection: ${arg.name ?? 'posicional'}.`
+      )
+  }
+  const children = parseSolidBlock(
+    parser,
+    previous,
+    token,
+    1,
+    'A projeção precisa de pelo menos um sólido.'
+  )
+  return {
+    ...blankShape(token),
+    kind: 'projection',
+    cut,
+    extrusion: defaultExtrusion(),
+    keepExtrusion: true,
+    children
+  }
+}
+
+function parseRevolve(parser: Parser, previous: ProjectDocument): ParsedRevolve {
+  const token = expectIdent(parser, 'rotate_extrude')
+  const args = parseArgs(parser)
+  let angle = 360
+  let start = 0
+  for (const arg of args) {
+    if (arg.name === 'angle' || arg.name === 'a') {
+      angle = requireFiniteNumber(arg.value, 'angle')
+    } else if (arg.name === 'start') {
+      start = requireFiniteNumber(arg.value, 'start')
+    } else {
+      failToken(
+        arg.value.token,
+        `Argumento não suportado em rotate_extrude: ${arg.name ?? 'posicional'}.`
+      )
+    }
+  }
+  if (angle <= 0 || angle > 360)
+    failToken(token, 'O ângulo da revolução precisa estar entre 0 e 360.')
+  const children = parseFlatBlock(parser, previous, token, 1, 'A revolução precisa de um perfil.')
+  if (children.length !== 1) failToken(token, 'A revolução precisa de um perfil.')
+  return { ...blankShape(token), kind: 'revolve', angle, start, children }
+}
+
+function parseMirror(parser: Parser, previous: ProjectDocument): ParsedMirror {
+  const token = expectIdent(parser, 'mirror')
+  const args = parseArgs(parser)
+  if (args.length !== 1) failToken(token, 'mirror() aceita apenas o eixo [x, y, z].')
+  const arg = args[0]
+  if (arg.name !== null && arg.name !== 'v') {
+    failToken(arg.value.token, 'mirror() aceita apenas o eixo [x, y, z].')
+  }
+  const axis = mirrorAxis(
+    requireCoordinate(arg.value, 'mirror() aceita apenas o eixo [x, y, z].'),
+    arg.value.token
+  )
+  const children = parseSolidBlock(parser, previous, token, 1, 'O espelho precisa de um sólido.')
+  if (children.length !== 1) failToken(token, 'O espelho precisa de um sólido.')
+  return { ...blankShape(token), kind: 'mirror', axis, children }
+}
+
+function parseResize(parser: Parser, previous: ProjectDocument): ParsedResize {
+  const token = expectIdent(parser, 'resize')
+  const args = parseArgs(parser)
+  let size: Vec3 | null = null
+  let auto = false
+  for (const arg of args) {
+    if (arg.name === null || arg.name === 'newsize') {
+      if (size) failToken(arg.value.token, 'Tamanho repetido em resize.')
+      size = requireNonNegativeSize(arg.value)
+    } else if (arg.name === 'auto') {
+      auto = requireBoolean(arg.value, 'auto')
+    } else {
+      failToken(arg.value.token, `Argumento não suportado em resize: ${arg.name}.`)
+    }
+  }
+  if (!size) failToken(token, 'resize precisa de um tamanho [x, y, z].')
+  const children = parseSolidBlock(
+    parser,
+    previous,
+    token,
+    1,
+    'O redimensionamento precisa de um sólido.'
+  )
+  if (children.length !== 1) failToken(token, 'O redimensionamento precisa de um sólido.')
+  return { ...blankShape(token), kind: 'resize', size, auto, children }
+}
+
+function parseMinkowski(parser: Parser, previous: ProjectDocument): ParsedMinkowski {
+  const token = expectIdent(parser, 'minkowski')
+  expectPunct(parser, '(')
+  expectPunct(parser, ')')
+  const children = parseSolidBlock(
+    parser,
+    previous,
+    token,
+    2,
+    'minkowski precisa de pelo menos dois sólidos.'
+  )
+  return { ...blankShape(token), kind: 'minkowski', children }
+}
+
+function parseHull3d(parser: Parser, previous: ProjectDocument): ParsedHull {
+  const token = expectIdent(parser, 'hull')
+  expectPunct(parser, '(')
+  expectPunct(parser, ')')
+  const children = parseSolidBlock(
+    parser,
+    previous,
+    token,
+    2,
+    'A casca 3D precisa de pelo menos dois sólidos.'
+  )
+  return { ...blankShape(token), kind: 'hull', children }
+}
+
 function parseBoolean(parser: Parser, kind: BooleanKind, previous: ProjectDocument): ParsedBoolean {
   const token = expectIdent(parser, kind)
   expectPunct(parser, '(')
@@ -778,6 +1161,59 @@ function parseRound3d(parser: Parser, previous: ProjectDocument): ParsedBoolean 
 
 function isParsedBoolean(node: ParsedNode): node is ParsedBoolean {
   return node.kind === 'union' || node.kind === 'difference' || node.kind === 'intersection'
+}
+
+function isParsedFlatOperation(node: ParsedNode): node is ParsedFlatOperation {
+  return node.kind === 'offset' || node.kind === 'hull2d' || node.kind === 'projection'
+}
+
+function isParsedOperation(node: ParsedNode): node is ParsedOperation {
+  return (
+    isParsedFlatOperation(node) ||
+    node.kind === 'hull' ||
+    node.kind === 'mirror' ||
+    node.kind === 'revolve' ||
+    node.kind === 'resize' ||
+    node.kind === 'minkowski'
+  )
+}
+
+function parsedChildren(node: ParsedNode): ParsedNode[] | null {
+  if (isParsedBoolean(node) || isParsedOperation(node)) return node.children
+  return null
+}
+
+function mirrorAxis(value: Vec3, token: Token): MirrorAxis {
+  const axes: MirrorAxis[] = ['x', 'y', 'z']
+  const matched = axes.filter((axis) => value[axis] !== 0)
+  const normal = matched.length === 1 && Math.abs(value[matched[0]]) === 1
+  if (!normal || value.x + value.y + value.z !== value[matched[0]]) {
+    throw new ParseFailure('O espelho aceita o eixo X, Y ou Z.', token.line, token.column)
+  }
+  return matched[0]
+}
+
+function requireBoolean(value: ArgValue, label: string): boolean {
+  if (value.type !== 'ident' || (value.value !== 'true' && value.value !== 'false')) {
+    throw new ParseFailure(
+      `${label} precisa ser true ou false.`,
+      value.token.line,
+      value.token.column
+    )
+  }
+  return value.value === 'true'
+}
+
+function requireNonNegativeSize(value: ArgValue): Vec3 {
+  const size = requireCoordinate(value, 'resize precisa de um tamanho [x, y, z].')
+  if (size.x < 0 || size.y < 0 || size.z < 0) {
+    throw new ParseFailure(
+      'O tamanho do resize não pode ser negativo.',
+      value.token.line,
+      value.token.column
+    )
+  }
+  return size
 }
 
 function parseModifier(parser: Parser): Modifier {
@@ -1148,7 +1584,7 @@ function materialize(
       scale: roundVec(parsed.scale)
     }
     context.nodes[id] = node
-  } else {
+  } else if (isParsedBoolean(parsed)) {
     const node: BooleanNode = {
       ...shared,
       kind: parsed.kind,
@@ -1169,6 +1605,8 @@ function materialize(
       )
     )
     context.nodes[id] = { ...draft, rounding: Math.min(limit, Math.max(0, draft.rounding)) }
+  } else {
+    context.nodes[id] = materializeOperation(parsed, shared, prev, id, context)
   }
   const built = context.nodes[id]
   if (prev?.locked && built && signature(prev) !== signature(built)) {
@@ -1179,6 +1617,87 @@ function materialize(
     )
   }
   return id
+}
+
+function materializeOperation(
+  parsed: ParsedOperation,
+  shared: {
+    id: string
+    name: string
+    visible: boolean
+    locked: boolean
+    consumedBy: string | null
+    transform: Transform
+    appearance: Appearance
+  },
+  prev: FeatureNode | null,
+  id: string,
+  context: BuildContext
+): FeatureNode {
+  const previousChildren =
+    prev && isGroupNode(prev) && prev.kind === parsed.kind ? childNodes(context.previous, prev) : []
+  const childIds = matchList(previousChildren, parsed.children, id, context)
+  if (parsed.kind === 'offset') {
+    const node: OffsetNode = {
+      ...shared,
+      kind: 'offset',
+      childIds,
+      mode: parsed.mode,
+      distance: round3(parsed.distance),
+      chamfer: parsed.chamfer,
+      extrusion: keptExtrusion(parsed, prev)
+    }
+    return node
+  }
+  if (parsed.kind === 'hull2d') {
+    const node: Hull2dNode = {
+      ...shared,
+      kind: 'hull2d',
+      childIds,
+      extrusion: keptExtrusion(parsed, prev)
+    }
+    return node
+  }
+  if (parsed.kind === 'hull') {
+    const node: HullNode = { ...shared, kind: 'hull', childIds }
+    return node
+  }
+  if (parsed.kind === 'mirror') {
+    const node: MirrorNode = { ...shared, kind: 'mirror', childIds, axis: parsed.axis }
+    return node
+  }
+  if (parsed.kind === 'revolve') {
+    const node: RevolveNode = {
+      ...shared,
+      kind: 'revolve',
+      childIds,
+      angle: round3(parsed.angle),
+      start: round3(parsed.start)
+    }
+    return node
+  }
+  if (parsed.kind === 'projection') {
+    const node: ProjectionNode = {
+      ...shared,
+      kind: 'projection',
+      childIds,
+      cut: parsed.cut,
+      extrusion: keptExtrusion(parsed, prev)
+    }
+    return node
+  }
+  if (parsed.kind === 'resize') {
+    const node: ResizeNode = {
+      ...shared,
+      kind: 'resize',
+      childIds,
+      size: roundVec(parsed.size),
+      auto: parsed.auto
+    }
+    return node
+  }
+  const node: MinkowskiNode = { ...shared, kind: 'minkowski', childIds }
+  return node
 }
 
 function assertRemovable(
@@ -1193,7 +1712,7 @@ function assertRemovable(
       at?.column ?? 1
     )
   }
-  if (!isBooleanNode(node)) return
+  if (!isGroupNode(node)) return
   for (const childId of node.childIds) {
     const child = activeModel(previous).nodes[childId]
     if (child) assertRemovable(child, previous, at)
@@ -1202,7 +1721,7 @@ function assertRemovable(
 
 function keepSubtree(node: FeatureNode, context: BuildContext): void {
   context.nodes[node.id] = cloneNode(node)
-  if (!isBooleanNode(node)) return
+  if (!isGroupNode(node)) return
   for (const childId of node.childIds) {
     const child = activeModel(context.previous).nodes[childId]
     if (child) keepSubtree(child, context)
@@ -1221,6 +1740,33 @@ function isParsedProfile(node: ParsedNode): node is ParsedProfile {
   )
 }
 
+function keptExtrusion(
+  parsed: { kind: string; extrusion: Extrusion; keepExtrusion?: boolean },
+  prev: FeatureNode | null
+): Extrusion {
+  if (parsed.keepExtrusion && prev && isProfileNode(prev) && prev.kind === parsed.kind) {
+    return { ...prev.extrusion }
+  }
+  if (
+    parsed.keepExtrusion &&
+    prev &&
+    (isOffsetNode(prev) || isHull2dNode(prev) || isProjectionNode(prev)) &&
+    prev.kind === parsed.kind
+  ) {
+    return { ...prev.extrusion }
+  }
+  if (parsed.keepExtrusion) return defaultExtrusion()
+  return {
+    height: round3(parsed.extrusion.height),
+    twist: round3(parsed.extrusion.twist),
+    scale: round3(parsed.extrusion.scale)
+  }
+}
+
+function prevFrom(context: BuildContext, id: string): FeatureNode | null {
+  return activeModel(context.previous).nodes[id] ?? null
+}
+
 function materializeProfile(
   parsed: ParsedProfile,
   shared: {
@@ -1234,11 +1780,7 @@ function materializeProfile(
   },
   context: BuildContext
 ): ProfileNodeFromParsed {
-  const extrusion = {
-    height: round3(parsed.extrusion.height),
-    twist: round3(parsed.extrusion.twist),
-    scale: round3(parsed.extrusion.scale)
-  }
+  const extrusion = keptExtrusion(parsed, prevFrom(context, shared.id))
   if (parsed.kind === 'rect') {
     const node: RectNode = {
       ...shared,
@@ -1342,7 +1884,7 @@ function cloneNode(node: FeatureNode): FeatureNode {
   }
   if (isCuboidNode(node) && isCuboidNode(copy)) return { ...copy, size: { ...node.size } }
   if (isComponentNode(node) && isComponentNode(copy)) return { ...copy, scale: { ...node.scale } }
-  if (isBooleanNode(node) && isBooleanNode(copy)) return { ...copy, childIds: [...node.childIds] }
+  if (isGroupNode(node) && isGroupNode(copy)) return cloneGroup(node)
   if (isProfileNode(node) && isProfileNode(copy)) return cloneProfile(node)
   return copy
 }
@@ -1365,7 +1907,18 @@ function cloneProfile(node: FeatureNode): FeatureNode {
   return { ...node, extrusion }
 }
 
-function childNodes(document: ProjectDocument, node: BooleanNode): FeatureNode[] {
+function cloneGroup(node: FeatureNode): FeatureNode {
+  if (!isGroupNode(node)) return node
+  const childIds = [...node.childIds]
+  if (isBooleanNode(node)) return { ...node, childIds }
+  if (isOffsetNode(node) || isHull2dNode(node) || isProjectionNode(node)) {
+    return { ...node, childIds, extrusion: { ...node.extrusion } }
+  }
+  if (isResizeNode(node)) return { ...node, childIds, size: { ...node.size } }
+  return { ...node, childIds }
+}
+
+function childNodes(document: ProjectDocument, node: GroupNode): FeatureNode[] {
   const nodes = activeModel(document).nodes
   return node.childIds.flatMap((id) => {
     const child = nodes[id]
@@ -1414,6 +1967,53 @@ function signature(node: FeatureNode): string {
   }
   if (isBooleanNode(node)) {
     return JSON.stringify({ ...common, childIds: node.childIds, rounding: round3(node.rounding) })
+  }
+  if (isOffsetNode(node)) {
+    return JSON.stringify({
+      ...common,
+      childIds: node.childIds,
+      mode: node.mode,
+      distance: round3(node.distance),
+      chamfer: node.chamfer,
+      extrusion: roundExtrusion(node.extrusion)
+    })
+  }
+  if (isHull2dNode(node)) {
+    return JSON.stringify({
+      ...common,
+      childIds: node.childIds,
+      extrusion: roundExtrusion(node.extrusion)
+    })
+  }
+  if (isHullNode(node) || isMinkowskiNode(node)) {
+    return JSON.stringify({ ...common, childIds: node.childIds })
+  }
+  if (isMirrorNode(node)) {
+    return JSON.stringify({ ...common, childIds: node.childIds, axis: node.axis })
+  }
+  if (isRevolveNode(node)) {
+    return JSON.stringify({
+      ...common,
+      childIds: node.childIds,
+      angle: round3(node.angle),
+      start: round3(node.start)
+    })
+  }
+  if (isProjectionNode(node)) {
+    return JSON.stringify({
+      ...common,
+      childIds: node.childIds,
+      cut: node.cut,
+      extrusion: roundExtrusion(node.extrusion)
+    })
+  }
+  if (isResizeNode(node)) {
+    return JSON.stringify({
+      ...common,
+      childIds: node.childIds,
+      size: roundVec(node.size),
+      auto: node.auto
+    })
   }
   if (isRectNode(node)) {
     return JSON.stringify({

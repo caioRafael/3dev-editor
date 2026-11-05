@@ -18,10 +18,18 @@ import {
   type EllipseNode,
   type Extrusion,
   type FeatureNode,
+  type Hull2dNode,
+  type HullNode,
+  type MinkowskiNode,
+  type MirrorNode,
   type NgonNode,
+  type OffsetNode,
   type ProfileNode,
   type ProjectDocument,
+  type ProjectionNode,
   type RectNode,
+  type ResizeNode,
+  type RevolveNode,
   type SphereNode,
   type StarNode,
   type SvgNode,
@@ -29,15 +37,26 @@ import {
   type Vec2,
   type Vec3,
   DEFAULT_COLOR,
+  hasFlatForm,
   isBooleanNode,
   isCircleNode,
   isComponentNode,
   isCuboidNode,
   isCylinderNode,
   isEllipseNode,
+  isGroupEnabled,
+  isGroupNode,
+  isHull2dNode,
+  isHullNode,
+  isMinkowskiNode,
+  isMirrorNode,
   isNgonNode,
+  isOffsetNode,
   isProfileNode,
+  isProjectionNode,
   isRectNode,
+  isResizeNode,
+  isRevolveNode,
   isSphereNode,
   isStarNode,
   isSvgNode,
@@ -105,13 +124,78 @@ function emitFeature(document: ProjectDocument, node: FeatureNode, fileName: str
 }
 
 function emitShape(document: ProjectDocument, node: FeatureNode, fileName: string): string {
+  if (isGroupNode(node) && !isGroupEnabled(node)) return emitInactiveGroup(document, node, fileName)
   if (isCuboidNode(node)) return `${emitCuboid(node)};`
   if (isCylinderNode(node)) return `${emitCylinder(node)};`
   if (isSphereNode(node)) return `${emitSphere(node)};`
   if (isComponentNode(node)) return `${node.componentName}();`
   if (isProfileNode(node)) return emitExtruded(node, fileName)
   if (isBooleanNode(node)) return emitBoolean(document, node, fileName)
+  if (isOffsetNode(node) || isHull2dNode(node) || isProjectionNode(node)) {
+    return emitExtrudedFlat(document, node, fileName)
+  }
+  if (isRevolveNode(node)) return emitRevolve(document, node, fileName)
+  if (isHullNode(node)) return emitGroupCall(document, node, fileName, 'hull()')
+  if (isMirrorNode(node)) return emitMirror(document, node, fileName)
+  if (isResizeNode(node)) return emitResize(document, node, fileName)
+  if (isMinkowskiNode(node)) return emitGroupCall(document, node, fileName, 'minkowski()')
   return ''
+}
+
+function emitFlatFeature(document: ProjectDocument, node: FeatureNode, fileName: string): string {
+  if (!node.visible || !hasFlatForm(node)) return ''
+  const shape = emitFlatShape(document, node, fileName)
+  if (!shape) return ''
+  const rotated = emitRotate(shape, node.transform.rotation)
+  const translated = emitTranslate(rotated, node.transform.position)
+  return emitColor(translated, node.appearance)
+}
+
+function emitInactiveGroup(document: ProjectDocument, node: FeatureNode, fileName: string): string {
+  if (!isGroupNode(node)) return ''
+  const nodes = document.files[fileName]?.nodes ?? {}
+  const parts = node.childIds
+    .map((id) => nodes[id])
+    .filter((child): child is FeatureNode => child !== undefined && child.visible)
+    .map((child) => emitFeature(document, child, fileName))
+    .filter((part) => part.length > 0)
+  if (parts.length === 0) return ''
+  if (parts.length === 1) return parts[0]
+  return `union() {\n${indent(parts.join('\n'), 4)}\n}`
+}
+
+function emitFlatShape(document: ProjectDocument, node: FeatureNode, fileName: string): string {
+  if (isGroupNode(node) && !isGroupEnabled(node)) return emitInactiveFlat(document, node, fileName)
+  if (isProfileNode(node)) return emitProfile2d(node, fileName)
+  if (isOffsetNode(node)) return emitOffset(document, node, fileName)
+  if (isHull2dNode(node)) return emitHull2d(document, node, fileName)
+  if (isProjectionNode(node)) return emitProjection(document, node, fileName)
+  return ''
+}
+
+function emitInactiveFlat(document: ProjectDocument, node: FeatureNode, fileName: string): string {
+  if (!isGroupNode(node)) return ''
+  const nodes = document.files[fileName]?.nodes ?? {}
+  const parts = node.childIds
+    .map((id) => nodes[id])
+    .filter(
+      (child): child is FeatureNode => child !== undefined && child.visible && hasFlatForm(child)
+    )
+    .map((child) => emitFlatFeature(document, child, fileName))
+    .filter((part) => part.length > 0)
+  if (parts.length === 0) return ''
+  if (parts.length === 1) return parts[0]
+  return `union() {\n${indent(parts.join('\n'), 4)}\n}`
+}
+
+function emitExtrudedFlat(
+  document: ProjectDocument,
+  node: OffsetNode | Hull2dNode | ProjectionNode,
+  fileName: string
+): string {
+  const profile = emitFlatShape(document, node, fileName)
+  if (!profile) return ''
+  return `linear_extrude(${emitExtrusion(node.extrusion)}) {\n${indent(profile, 4)}\n}`
 }
 
 export function emitProfile2d(node: ProfileNode, fileName = MAIN_FILE): string {
@@ -199,6 +283,95 @@ function emitCylinder(node: CylinderNode): string {
 
 function emitSphere(node: SphereNode): string {
   return `spheroid(d=${formatNumber(node.diameter)}, anchor=CENTER)`
+}
+
+function emitOffset(document: ProjectDocument, node: OffsetNode, fileName: string): string {
+  const children = emitFlatChildren(document, node, fileName)
+  if (!children) return ''
+  return `${emitOffsetCall(node)} {\n${indent(children, 4)}\n}`
+}
+
+function emitOffsetCall(node: OffsetNode): string {
+  if (node.mode === 'radius') return `offset(r=${formatNumber(node.distance)})`
+  if (node.chamfer) return `offset(delta=${formatNumber(node.distance)}, chamfer=true)`
+  return `offset(delta=${formatNumber(node.distance)})`
+}
+
+function emitHull2d(document: ProjectDocument, node: Hull2dNode, fileName: string): string {
+  const children = emitFlatChildren(document, node, fileName)
+  if (!children) return ''
+  return `hull() {\n${indent(children, 4)}\n}`
+}
+
+function emitProjection(document: ProjectDocument, node: ProjectionNode, fileName: string): string {
+  const children = emitSolidChildren(document, node, fileName)
+  if (!children) return ''
+  return `projection(cut=${node.cut ? 'true' : 'false'}) {\n${indent(children, 4)}\n}`
+}
+
+function emitRevolve(document: ProjectDocument, node: RevolveNode, fileName: string): string {
+  const children = emitFlatChildren(document, node, fileName)
+  if (!children) return ''
+  const args = [`angle=${formatNumber(node.angle)}`]
+  if (node.start !== 0) args.push(`start=${formatNumber(node.start)}`)
+  return `rotate_extrude(${args.join(', ')}) {\n${indent(children, 4)}\n}`
+}
+
+function emitMirror(document: ProjectDocument, node: MirrorNode, fileName: string): string {
+  const children = emitSolidChildren(document, node, fileName)
+  if (!children) return ''
+  const normal =
+    node.axis === 'x'
+      ? { x: 1, y: 0, z: 0 }
+      : node.axis === 'y'
+        ? { x: 0, y: 1, z: 0 }
+        : { x: 0, y: 0, z: 1 }
+  return `mirror(${emitVec(normal)}) {\n${indent(children, 4)}\n}`
+}
+
+function emitResize(document: ProjectDocument, node: ResizeNode, fileName: string): string {
+  const children = emitSolidChildren(document, node, fileName)
+  if (!children) return ''
+  return `resize(${emitVec(node.size)}, auto=${node.auto ? 'true' : 'false'}) {\n${indent(children, 4)}\n}`
+}
+
+function emitGroupCall(
+  document: ProjectDocument,
+  node: HullNode | MinkowskiNode,
+  fileName: string,
+  call: string
+): string {
+  const children = emitSolidChildren(document, node, fileName)
+  if (!children) return ''
+  return `${call} {\n${indent(children, 4)}\n}`
+}
+
+function emitFlatChildren(document: ProjectDocument, node: FeatureNode, fileName: string): string {
+  return emitListedChildren(document, node, fileName, (child) =>
+    emitFlatFeature(document, child, fileName)
+  )
+}
+
+function emitSolidChildren(document: ProjectDocument, node: FeatureNode, fileName: string): string {
+  return emitListedChildren(document, node, fileName, (child) =>
+    emitFeature(document, child, fileName)
+  )
+}
+
+function emitListedChildren(
+  document: ProjectDocument,
+  node: FeatureNode,
+  fileName: string,
+  emitChild: (child: FeatureNode) => string
+): string {
+  if (!isGroupNode(node)) return ''
+  const nodes = document.files[fileName]?.nodes ?? {}
+  return node.childIds
+    .map((id) => nodes[id])
+    .filter((child): child is FeatureNode => child !== undefined && child.visible)
+    .map((child) => emitChild(child))
+    .filter((part) => part.length > 0)
+    .join('\n')
 }
 
 function emitBoolean(document: ProjectDocument, node: BooleanNode, fileName: string): string {

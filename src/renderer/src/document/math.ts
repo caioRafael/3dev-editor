@@ -2,6 +2,7 @@ import { Euler, Quaternion, Vector3 } from 'three'
 import {
   type Extrusion,
   type FeatureNode,
+  type MirrorAxis,
   type ProfileNode,
   type ProjectDocument,
   type Transform,
@@ -12,9 +13,18 @@ import {
   isCuboidNode,
   isCylinderNode,
   isEllipseNode,
+  isGroupNode,
+  isHull2dNode,
+  isHullNode,
+  isMinkowskiNode,
+  isMirrorNode,
   isNgonNode,
+  isOffsetNode,
   isProfileNode,
+  isProjectionNode,
   isRectNode,
+  isResizeNode,
+  isRevolveNode,
   isSphereNode,
   isStarNode,
   isTextNode
@@ -52,17 +62,93 @@ export function localBounds(
   if (isCylinderNode(node)) return centeredBox(node.diameter, node.diameter, node.height)
   if (isSphereNode(node)) return centeredBox(node.diameter, node.diameter, node.diameter)
   if (isProfileNode(node)) return profileBounds(node)
-  if (!isBooleanNode(node)) return null
+  if (isGroupNode(node)) return groupBounds(document, node, fileName, seen)
+  return null
+}
+
+function groupBounds(
+  document: ProjectDocument,
+  node: FeatureNode,
+  fileName: string,
+  seen: string[]
+): Bounds | null {
+  if (!isGroupNode(node)) return null
   const nodes = document.files[fileName]?.nodes ?? {}
-  const placed = node.childIds
+  const children = node.childIds
     .map((id) => nodes[id])
     .filter((child): child is FeatureNode => child !== undefined && child.visible)
+  if (children.length === 0) return null
+  if (isBooleanNode(node)) {
+    const placed = children
+      .map((child) => placedBounds(document, child, fileName, seen))
+      .filter((bounds): bounds is Bounds => bounds !== null)
+    if (placed.length === 0) return null
+    if (node.kind === 'difference') return placed[0]
+    if (node.kind === 'intersection') return intersectBounds(placed)
+    return unionBounds(placed)
+  }
+  if (isOffsetNode(node) || isHull2dNode(node) || isProjectionNode(node)) {
+    const footprint = localFootprint(document, node, fileName, seen)
+    if (!footprint) return null
+    return extrudedBounds(
+      footprint.max.x - footprint.min.x,
+      footprint.max.y - footprint.min.y,
+      node.extrusion,
+      (footprint.min.x + footprint.max.x) / 2,
+      (footprint.min.y + footprint.max.y) / 2
+    )
+  }
+  if (isRevolveNode(node)) {
+    const footprint = placedFootprint(document, children[0], fileName, seen)
+    if (!footprint) return null
+    const radius = Math.max(Math.abs(footprint.min.x), Math.abs(footprint.max.x), 0.1)
+    return {
+      min: { x: -radius, y: -radius, z: footprint.min.y },
+      max: { x: radius, y: radius, z: footprint.max.y }
+    }
+  }
+  const placed = children
     .map((child) => placedBounds(document, child, fileName, seen))
     .filter((bounds): bounds is Bounds => bounds !== null)
   if (placed.length === 0) return null
-  if (node.kind === 'difference') return placed[0]
-  if (node.kind === 'intersection') return intersectBounds(placed)
+  if (isMirrorNode(node)) return mirrorBounds(placed[0], node.axis)
+  if (isResizeNode(node))
+    return scaleBounds(placed[0], resizeScale(boundsSize(placed[0]), node.size, node.auto))
+  if (isHullNode(node)) return unionBounds(placed)
+  if (isMinkowskiNode(node)) return sumBounds(placed)
   return unionBounds(placed)
+}
+
+export function boundsSize(bounds: Bounds | null): Vec3 {
+  if (!bounds) return { x: 10, y: 10, z: 10 }
+  return {
+    x: round3(Math.max(0.1, bounds.max.x - bounds.min.x)),
+    y: round3(Math.max(0.1, bounds.max.y - bounds.min.y)),
+    z: round3(Math.max(0.1, bounds.max.z - bounds.min.z))
+  }
+}
+
+export function resizeScale(current: Vec3, target: Vec3, auto: boolean): Vec3 {
+  const ratio = (next: number, previous: number): number => {
+    if (previous === 0) return next === 0 ? 1 : 0
+    return next / previous
+  }
+  const scale = {
+    x: ratio(target.x, current.x),
+    y: ratio(target.y, current.y),
+    z: ratio(target.z, current.z)
+  }
+  if (!auto) return scale
+  const explicit = [target.x, target.y, target.z]
+    .map((value, index) => (value > 0 ? [scale.x, scale.y, scale.z][index] : null))
+    .filter((value): value is number => value !== null)
+  const average =
+    explicit.length > 0 ? explicit.reduce((sum, value) => sum + value, 0) / explicit.length : 1
+  return {
+    x: target.x > 0 ? scale.x : average,
+    y: target.y > 0 ? scale.y : average,
+    z: target.z > 0 ? scale.z : average
+  }
 }
 
 export function booleanRadiusLimit(bounds: Bounds | null): number {
@@ -295,6 +381,100 @@ function intersectBounds(bounds: Bounds[]): Bounds | null {
   }
   if (min.x >= max.x || min.y >= max.y || min.z >= max.z) return null
   return { min, max }
+}
+
+function placedFootprint(
+  document: ProjectDocument,
+  node: FeatureNode,
+  fileName: string,
+  seen: string[]
+): Bounds | null {
+  const bounds = localFootprint(document, node, fileName, seen)
+  if (!bounds) return null
+  return transformBounds(bounds, {
+    position: { x: node.transform.position.x, y: node.transform.position.y, z: 0 },
+    rotation: { x: 0, y: 0, z: node.transform.rotation.z }
+  })
+}
+
+function localFootprint(
+  document: ProjectDocument,
+  node: FeatureNode,
+  fileName: string,
+  seen: string[]
+): Bounds | null {
+  if (isProfileNode(node)) {
+    const span = profileSpan(node)
+    return {
+      min: { x: -span.width / 2 + span.offsetX, y: -span.depth / 2 + span.offsetY, z: 0 },
+      max: { x: span.width / 2 + span.offsetX, y: span.depth / 2 + span.offsetY, z: 0 }
+    }
+  }
+  if (!isOffsetNode(node) && !isHull2dNode(node) && !isProjectionNode(node)) return null
+  const nodes = document.files[fileName]?.nodes ?? {}
+  const children = node.childIds
+    .map((id) => nodes[id])
+    .filter((child): child is FeatureNode => child !== undefined && child.visible)
+  if (isProjectionNode(node)) {
+    const placed = children
+      .map((child) => placedBounds(document, child, fileName, seen))
+      .filter((bounds): bounds is Bounds => bounds !== null)
+    if (placed.length === 0) return null
+    const union = unionBounds(placed)
+    return {
+      min: { x: union.min.x, y: union.min.y, z: 0 },
+      max: { x: union.max.x, y: union.max.y, z: 0 }
+    }
+  }
+  const footprints = children
+    .map((child) => placedFootprint(document, child, fileName, seen))
+    .filter((bounds): bounds is Bounds => bounds !== null)
+  if (footprints.length === 0) return null
+  const union = unionBounds(footprints)
+  return isOffsetNode(node) ? expandBounds(union, node.distance) : union
+}
+
+function expandBounds(bounds: Bounds, distance: number): Bounds | null {
+  const next = {
+    min: { x: bounds.min.x - distance, y: bounds.min.y - distance, z: 0 },
+    max: { x: bounds.max.x + distance, y: bounds.max.y + distance, z: 0 }
+  }
+  if (next.min.x >= next.max.x || next.min.y >= next.max.y) return null
+  return next
+}
+
+function mirrorBounds(bounds: Bounds, axis: MirrorAxis): Bounds {
+  const flip = (value: number, component: MirrorAxis): number =>
+    component === axis ? -value : value
+  let minX = Infinity
+  let minY = Infinity
+  let minZ = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  let maxZ = -Infinity
+  for (const x of [bounds.min.x, bounds.max.x]) {
+    for (const y of [bounds.min.y, bounds.max.y]) {
+      for (const z of [bounds.min.z, bounds.max.z]) {
+        const px = flip(x, 'x')
+        const py = flip(y, 'y')
+        const pz = flip(z, 'z')
+        minX = Math.min(minX, px)
+        minY = Math.min(minY, py)
+        minZ = Math.min(minZ, pz)
+        maxX = Math.max(maxX, px)
+        maxY = Math.max(maxY, py)
+        maxZ = Math.max(maxZ, pz)
+      }
+    }
+  }
+  return { min: { x: minX, y: minY, z: minZ }, max: { x: maxX, y: maxY, z: maxZ } }
+}
+
+function sumBounds(bounds: Bounds[]): Bounds {
+  return bounds.reduce((sum, item) => ({
+    min: { x: sum.min.x + item.min.x, y: sum.min.y + item.min.y, z: sum.min.z + item.min.z },
+    max: { x: sum.max.x + item.max.x, y: sum.max.y + item.max.y, z: sum.max.z + item.max.z }
+  }))
 }
 
 function transformBounds(bounds: Bounds, transform: Transform): Bounds {

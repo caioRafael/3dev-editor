@@ -4,19 +4,57 @@ import { requestBooleanMesh } from './booleanClient'
 import { buildBooleanMesh, subtreeKey, type SolidMeshData } from './manifoldPreview'
 import { prepareContours } from './prepareContours'
 import { useEditor } from '../document/store'
-import { type ProjectDocument, isBooleanNode } from '../document/types'
+import { type ProjectDocument, isBooleanNode, isGroupNode } from '../document/types'
 
 export function useBooleanGeometry(nodeId: string, fileName?: string): BufferGeometry | null {
   const document = useEditor((state) => state.document)
   const owner = fileName ?? document.activeFile
   const node = document.files[owner]?.nodes[nodeId]
-  const key = node && isBooleanNode(node) ? subtreeKey(document, node, owner) : ''
+  const key = node && isGroupNode(node) ? subtreeKey(document, node, owner) : ''
+  const heavy = node?.kind === 'minkowski' || node?.kind === 'hull'
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null)
 
   useEffect(() => {
     if (!key) return undefined
     let cancelled = false
     let stage: 'base' | 'rounded' = 'base'
+    if (heavy) {
+      useEditor.getState().setStatus('Calculando…')
+      useEditor.getState().beginPreview('Calculando…')
+      let closed = false
+      const finishPreview = (): void => {
+        if (closed) return
+        closed = true
+        useEditor.getState().endPreview()
+      }
+      void prepareContours(useEditor.getState().document)
+        .then((contours) =>
+          requestBooleanMesh(useEditor.getState().document, nodeId, contours, owner)
+        )
+        .then((data) => {
+          if (cancelled) return
+          if (!data || data.positions.length === 0) {
+            useEditor.getState().setStatus('A operação não gerou sólido.')
+            return
+          }
+          const next = meshGeometry(data)
+          setGeometry((currentGeometry) => {
+            currentGeometry?.dispose()
+            return next
+          })
+          if (useEditor.getState().status === 'Calculando…')
+            useEditor.getState().setStatus('Pronto')
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return
+          useEditor.getState().setStatus(messageFrom(error))
+        })
+        .finally(finishPreview)
+      return () => {
+        cancelled = true
+        finishPreview()
+      }
+    }
     const current = useEditor.getState().document
     const roundEdges = needsEdgeRounding(current, nodeId, owner)
     const show = (data: SolidMeshData | null, rounded: boolean): void => {
@@ -84,7 +122,7 @@ export function useBooleanGeometry(nodeId: string, fileName?: string): BufferGeo
       window.clearTimeout(timeout)
       finishPreview()
     }
-  }, [key, nodeId, owner])
+  }, [heavy, key, nodeId, owner])
 
   useEffect(() => {
     return () => {
@@ -100,8 +138,8 @@ export function useBooleanGeometry(nodeId: string, fileName?: string): BufferGeo
 
 function needsEdgeRounding(document: ProjectDocument, nodeId: string, fileName: string): boolean {
   const node = document.files[fileName]?.nodes[nodeId]
-  if (!node || !isBooleanNode(node)) return false
-  if (node.rounding > 0) return true
+  if (!node || !isGroupNode(node)) return false
+  if (isBooleanNode(node) && node.rounding > 0) return true
   return node.childIds.some((id) => needsEdgeRounding(document, id, fileName))
 }
 

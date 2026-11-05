@@ -61,6 +61,41 @@ const SNIPPETS: Snippet[] = [
     label: 'intersection',
     detail: 'Interseção',
     insertText: 'intersection() {\n    $0\n}'
+  },
+  {
+    label: 'offset',
+    detail: 'Offset 2D',
+    insertText: 'offset(r=${1:1}) {\n    $0\n}'
+  },
+  {
+    label: 'hull',
+    detail: 'Casca convexa',
+    insertText: 'hull() {\n    $0\n}'
+  },
+  {
+    label: 'mirror',
+    detail: 'Espelho',
+    insertText: 'mirror([${1:1}, ${2:0}, ${3:0}]) {\n    $0\n}'
+  },
+  {
+    label: 'rotate_extrude',
+    detail: 'Revolução',
+    insertText: 'rotate_extrude(angle=${1:360}) {\n    $0\n}'
+  },
+  {
+    label: 'projection',
+    detail: 'Projeção',
+    insertText: 'projection(cut=${1:false}) {\n    $0\n}'
+  },
+  {
+    label: 'resize',
+    detail: 'Redimensionar',
+    insertText: 'resize([${1:20}, ${2:20}, ${3:20}], auto=${4:false}) {\n    $0\n}'
+  },
+  {
+    label: 'minkowski',
+    detail: 'Minkowski',
+    insertText: 'minkowski() {\n    $0\n}'
   }
 ]
 

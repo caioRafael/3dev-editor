@@ -6,6 +6,7 @@ import {
   createComponentFile,
   createComponentInstance,
   createEmptyDocument,
+  createOperation,
   createPrimitive,
   createProfile,
   createSvgProfile
@@ -209,6 +210,26 @@ spheroid(d=10, anchor=CENTER);
   })
 })
 
+describe('operation round trip', () => {
+  it('round-trips offset, hull, mirror, revolve, projection, resize and minkowski', () => {
+    const circle = createProfile(createEmptyDocument(), 'circle')
+    const offset = createOperation(circle.document, 'offset', [circle.id])
+    expectRoundTrip(offset.document)
+
+    const outer = createOperation(offset.document, 'offset', [offset.id ?? ''])
+    expectRoundTrip(outer.document)
+
+    const first = createPrimitive(createEmptyDocument(), 'cuboid')
+    const second = createPrimitive(first.document, 'sphere')
+    expectRoundTrip(createOperation(second.document, 'hull', [first.id, second.id]).document)
+    expectRoundTrip(createOperation(first.document, 'mirror', [first.id]).document)
+    expectRoundTrip(createOperation(circle.document, 'revolve', [circle.id]).document)
+    expectRoundTrip(createOperation(first.document, 'projection', [first.id]).document)
+    expectRoundTrip(createOperation(first.document, 'resize', [first.id]).document)
+    expectRoundTrip(createOperation(second.document, 'minkowski', [first.id, second.id]).document)
+  })
+})
+
 describe('applyCode', () => {
   it('pushes a code edit onto the undo stack', () => {
     useEditor.getState().newDocument()
@@ -226,6 +247,14 @@ describe('applyCode', () => {
     expect(isCuboid(restored) && restored.size.x).toBe(20)
   })
 })
+
+function expectRoundTrip(document: ReturnType<typeof createEmptyDocument>): void {
+  const source = generateOpenscad(document)
+  const parsed = parseOpenscad(source, document)
+  expect(parsed.ok).toBe(true)
+  if (!parsed.ok) return
+  expect(generateOpenscad(parsed.document)).toBe(source)
+}
 
 function isCuboid(node: { kind: string } | undefined): node is CuboidNode {
   return node?.kind === 'cuboid'

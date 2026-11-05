@@ -30,6 +30,8 @@ export interface FeatureBase {
   consumedBy: string | null
   transform: Transform
   appearance: Appearance
+  /** Absent or true applies a group. False keeps the children and skips the effect. */
+  enabled?: boolean
 }
 
 export interface CuboidNode extends FeatureBase {
@@ -135,11 +137,85 @@ export interface ComponentInstanceNode extends FeatureBase {
   scale: Vec3
 }
 
+export type OffsetMode = 'radius' | 'delta'
+export type MirrorAxis = 'x' | 'y' | 'z'
+
+export interface OffsetNode extends FeatureBase {
+  kind: 'offset'
+  childIds: string[]
+  mode: OffsetMode
+  distance: number
+  chamfer: boolean
+  extrusion: Extrusion
+}
+
+export interface Hull2dNode extends FeatureBase {
+  kind: 'hull2d'
+  childIds: string[]
+  extrusion: Extrusion
+}
+
+export interface HullNode extends FeatureBase {
+  kind: 'hull'
+  childIds: string[]
+}
+
+export interface MirrorNode extends FeatureBase {
+  kind: 'mirror'
+  childIds: string[]
+  axis: MirrorAxis
+}
+
+export interface RevolveNode extends FeatureBase {
+  kind: 'revolve'
+  childIds: string[]
+  angle: number
+  start: number
+}
+
+export interface ProjectionNode extends FeatureBase {
+  kind: 'projection'
+  childIds: string[]
+  cut: boolean
+  extrusion: Extrusion
+}
+
+export interface ResizeNode extends FeatureBase {
+  kind: 'resize'
+  childIds: string[]
+  size: Vec3
+  auto: boolean
+}
+
+export interface MinkowskiNode extends FeatureBase {
+  kind: 'minkowski'
+  childIds: string[]
+}
+
+export type OperationNode =
+  | OffsetNode
+  | Hull2dNode
+  | HullNode
+  | MirrorNode
+  | RevolveNode
+  | ProjectionNode
+  | ResizeNode
+  | MinkowskiNode
+
+export type GroupNode = BooleanNode | OperationNode
+
 export type ProfileNode =
   RectNode | CircleNode | EllipseNode | NgonNode | StarNode | TextNode | SvgNode
 export type FeatureNode =
-  CuboidNode | CylinderNode | SphereNode | BooleanNode | ProfileNode | ComponentInstanceNode
+  | CuboidNode
+  | CylinderNode
+  | SphereNode
+  | BooleanNode
+  | ProfileNode
+  | ComponentInstanceNode
+  | OperationNode
 export type BooleanKind = BooleanNode['kind']
+export type OperationKind = OperationNode['kind']
 export type PrimitiveKind = 'cuboid' | 'cylinder' | 'sphere'
 export type ProfileKind = ProfileNode['kind']
 export type ShapeProfileKind = Exclude<ProfileKind, 'svg'>
@@ -166,6 +242,7 @@ export interface FeaturePatch {
   name?: string
   visible?: boolean
   locked?: boolean
+  enabled?: boolean
   transform?: Transform
   appearance?: Appearance
   size?: Vec3
@@ -186,6 +263,14 @@ export interface FeaturePatch {
   valign?: TextValign
   importScale?: number
   scale?: Vec3
+  offsetMode?: OffsetMode
+  distance?: number
+  offsetChamfer?: boolean
+  mirrorAxis?: MirrorAxis
+  revolveAngle?: number
+  revolveStart?: number
+  projectionCut?: boolean
+  resizeAuto?: boolean
 }
 
 export function zeroVec(): Vec3 {
@@ -198,6 +283,94 @@ export function identityTransform(): Transform {
 
 export function isBooleanNode(node: FeatureNode): node is BooleanNode {
   return node.kind === 'union' || node.kind === 'difference' || node.kind === 'intersection'
+}
+
+export function isOffsetNode(node: FeatureNode): node is OffsetNode {
+  return node.kind === 'offset'
+}
+
+export function isHull2dNode(node: FeatureNode): node is Hull2dNode {
+  return node.kind === 'hull2d'
+}
+
+export function isHullNode(node: FeatureNode): node is HullNode {
+  return node.kind === 'hull'
+}
+
+export function isMirrorNode(node: FeatureNode): node is MirrorNode {
+  return node.kind === 'mirror'
+}
+
+export function isRevolveNode(node: FeatureNode): node is RevolveNode {
+  return node.kind === 'revolve'
+}
+
+export function isProjectionNode(node: FeatureNode): node is ProjectionNode {
+  return node.kind === 'projection'
+}
+
+export function isResizeNode(node: FeatureNode): node is ResizeNode {
+  return node.kind === 'resize'
+}
+
+export function isMinkowskiNode(node: FeatureNode): node is MinkowskiNode {
+  return node.kind === 'minkowski'
+}
+
+export function isOperationNode(node: FeatureNode): node is OperationNode {
+  return (
+    isOffsetNode(node) ||
+    isHull2dNode(node) ||
+    isHullNode(node) ||
+    isMirrorNode(node) ||
+    isRevolveNode(node) ||
+    isProjectionNode(node) ||
+    isResizeNode(node) ||
+    isMinkowskiNode(node)
+  )
+}
+
+export function isGroupNode(node: FeatureNode): node is GroupNode {
+  return isBooleanNode(node) || isOperationNode(node)
+}
+
+export function isGroupEnabled(node: FeatureNode): boolean {
+  return !isGroupNode(node) || node.enabled !== false
+}
+
+export function showsInactiveChildren(
+  nodes: Record<string, FeatureNode>,
+  node: FeatureNode
+): boolean {
+  const parent = node.consumedBy ? nodes[node.consumedBy] : undefined
+  if (!parent || !isGroupNode(parent) || isGroupEnabled(parent)) return false
+  let cursor: FeatureNode = parent
+  while (cursor.consumedBy) {
+    const ancestor = nodes[cursor.consumedBy]
+    if (!ancestor || !isGroupNode(ancestor)) return true
+    if (isGroupEnabled(ancestor)) return false
+    cursor = ancestor
+  }
+  return true
+}
+
+export function hasFlatForm(node: FeatureNode): boolean {
+  return isProfileNode(node) || isOffsetNode(node) || isHull2dNode(node) || isProjectionNode(node)
+}
+
+export function hasOwnExtrusion(
+  node: FeatureNode
+): node is ProfileNode | OffsetNode | Hull2dNode | ProjectionNode {
+  return isProfileNode(node) || isOffsetNode(node) || isHull2dNode(node) || isProjectionNode(node)
+}
+
+export function operationMinimum(kind: OperationKind): number {
+  if (kind === 'hull2d' || kind === 'hull' || kind === 'minkowski') return 2
+  return 1
+}
+
+export function operationNeedsFlat(kind: OperationKind): boolean {
+  return kind === 'offset' || kind === 'hull2d' || kind === 'revolve'
 }
 
 export function isComponentNode(node: FeatureNode): node is ComponentInstanceNode {

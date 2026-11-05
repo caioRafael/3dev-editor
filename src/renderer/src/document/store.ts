@@ -11,6 +11,7 @@ import { MAIN_FILE, activeModel } from './files'
 import {
   bakeScale,
   createBoolean,
+  createOperation,
   createComponentFile,
   createComponentInstance,
   createEmptyDocument,
@@ -18,12 +19,19 @@ import {
   createProfile,
   createSvgProfile,
   deleteNodes,
+  groupToToggle,
   openModelFile,
   patchNode,
   setNodeTransform,
   type BooleanResult
 } from './tree'
-import type { BooleanKind, PrimitiveKind, ShapeProfileKind } from './types'
+import {
+  type BooleanKind,
+  type OperationKind,
+  type PrimitiveKind,
+  type ShapeProfileKind,
+  isGroupEnabled
+} from './types'
 
 const HISTORY_LIMIT = 50
 
@@ -63,6 +71,7 @@ interface EditorState {
   addComponent: (componentName: string) => void
   openFile: (fileName: string) => void
   applyBoolean: (kind: BooleanKind) => void
+  applyOperation: (kind: OperationKind) => void
   removeSelected: () => void
   updateNode: (id: string, patch: FeaturePatch, recordHistory?: boolean) => void
   markHistory: () => void
@@ -248,12 +257,27 @@ export const useEditor = create<EditorState>((set) => ({
 
   applyBoolean: (kind) =>
     set((state) => {
+      const toggled = toggleSelectedGroup(state, kind)
+      if (toggled) return toggled
       const result: BooleanResult = createBoolean(state.document, kind, state.selection)
       if (!result.id) return { status: result.error ?? 'Não foi possível criar a operação.' }
       return {
         ...commit(state, result.document),
         selection: [result.id],
         status: 'Operação booleana criada'
+      }
+    }),
+
+  applyOperation: (kind) =>
+    set((state) => {
+      const toggled = toggleSelectedGroup(state, kind)
+      if (toggled) return toggled
+      const result = createOperation(state.document, kind, state.selection)
+      if (!result.id) return { status: result.error ?? 'Não foi possível criar a operação.' }
+      return {
+        ...commit(state, result.document),
+        selection: [result.id],
+        status: 'Operação criada'
       }
     }),
 
@@ -275,7 +299,9 @@ export const useEditor = create<EditorState>((set) => ({
       const node = activeModel(state.document).nodes[id]
       if (!node) return state
       const keys = Object.keys(patch)
-      const metadataOnly = keys.every((key) => key === 'locked' || key === 'visible')
+      const metadataOnly = keys.every(
+        (key) => key === 'locked' || key === 'visible' || key === 'enabled'
+      )
       if (node.locked && !metadataOnly) return { status: 'Sólido travado.' }
       const next = patchNode(state.document, id, patch)
       if (!recordHistory) {
@@ -332,6 +358,22 @@ export const useEditor = create<EditorState>((set) => ({
 
 function restoredDocument(snapshot: ProjectDocument, activeFile: string): ProjectDocument {
   return { ...snapshot, activeFile: snapshot.files[activeFile] ? activeFile : MAIN_FILE }
+}
+
+function toggleSelectedGroup(
+  state: EditorState,
+  kind: BooleanKind | OperationKind
+): Partial<EditorState> | null {
+  const id = groupToToggle(state.document, state.selection, kind)
+  if (!id) return null
+  const node = activeModel(state.document).nodes[id]
+  if (!node) return null
+  const enabled = !isGroupEnabled(node)
+  return {
+    ...commit(state, patchNode(state.document, id, { enabled })),
+    selection: [id],
+    status: enabled ? 'Operação ativada' : 'Operação desativada'
+  }
 }
 
 function commit(state: EditorState, document: ProjectDocument): Partial<EditorState> {

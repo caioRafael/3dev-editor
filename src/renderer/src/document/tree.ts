@@ -1,5 +1,6 @@
 import {
   booleanRadiusLimit,
+  boundsSize,
   composeTransform,
   isNearlyOne,
   localBounds,
@@ -28,11 +29,22 @@ import {
   type Extrusion,
   type FeatureNode,
   type FeaturePatch,
+  type GroupNode,
+  type Hull2dNode,
+  type HullNode,
+  type MinkowskiNode,
+  type MirrorNode,
   type NgonNode,
+  type OffsetNode,
+  type OperationKind,
+  type OperationNode,
   type PrimitiveKind,
   type ProfileNode,
   type ProjectDocument,
+  type ProjectionNode,
   type RectNode,
+  type ResizeNode,
+  type RevolveNode,
   type ShapeProfileKind,
   type SphereNode,
   type StarNode,
@@ -47,6 +59,8 @@ import {
   DEFAULT_FONT,
   MIN_SIZE,
   defaultExtrusion,
+  hasFlatForm,
+  hasOwnExtrusion,
   identityTransform,
   isBooleanNode,
   isCircleNode,
@@ -54,18 +68,31 @@ import {
   isCuboidNode,
   isCylinderNode,
   isEllipseNode,
+  isGroupNode,
+  isHull2dNode,
+  isMirrorNode,
   isNgonNode,
+  isOffsetNode,
+  isOperationNode,
   isProfileNode,
+  isProjectionNode,
   isRectNode,
+  isResizeNode,
+  isRevolveNode,
   isSphereNode,
   isStarNode,
   isSvgNode,
-  isTextNode
+  isTextNode,
+  operationMinimum,
+  operationNeedsFlat
 } from './types'
 
 const PALETTE = ['#d97757', '#5b8def', '#6fbf73', '#e0b44f', '#b07cc6', '#4fb6c4']
 
-const LABELS: Record<PrimitiveKind | BooleanKind | ShapeProfileKind | 'svg', string> = {
+const LABELS: Record<
+  PrimitiveKind | BooleanKind | ShapeProfileKind | 'svg' | OperationKind,
+  string
+> = {
   cuboid: 'Cubo',
   cylinder: 'Cilindro',
   sphere: 'Esfera',
@@ -78,7 +105,15 @@ const LABELS: Record<PrimitiveKind | BooleanKind | ShapeProfileKind | 'svg', str
   ngon: 'Polígono',
   star: 'Estrela',
   text: 'Texto',
-  svg: 'SVG'
+  svg: 'SVG',
+  offset: 'Offset',
+  hull2d: 'Casca 2D',
+  hull: 'Casca 3D',
+  mirror: 'Espelho',
+  revolve: 'Revolução',
+  projection: 'Projeção',
+  resize: 'Redimensionar',
+  minkowski: 'Minkowski'
 }
 
 const TEXT_ALIGNS_H: TextHalign[] = ['left', 'center', 'right']
@@ -259,6 +294,7 @@ export function createBoolean(
     kind,
     visible: true,
     locked: false,
+    enabled: true,
     consumedBy: null,
     childIds: unique,
     rounding: 0,
@@ -284,32 +320,169 @@ export function createBoolean(
   return { document: withModel(document, nextNodes), id, error: null }
 }
 
+const OPERATION_ERRORS: Record<OperationKind, string> = {
+  offset: 'Selecione pelo menos um perfil ou uma operação 2D.',
+  hull2d: 'Selecione pelo menos dois perfis ou operações 2D.',
+  hull: 'Selecione pelo menos dois sólidos.',
+  mirror: 'Selecione um sólido para espelhar.',
+  revolve: 'Selecione um perfil ou uma operação 2D para revolucionar.',
+  projection: 'Selecione pelo menos um sólido para projetar.',
+  resize: 'Selecione um sólido para redimensionar.',
+  minkowski: 'Selecione pelo menos dois sólidos.'
+}
+
+export function createOperation(
+  document: ProjectDocument,
+  kind: OperationKind,
+  selectedIds: string[]
+): BooleanResult {
+  const nodes = nodesOf(document)
+  const unique = [...new Set(selectedIds)].filter((id) => nodes[id])
+  const minimum = operationMinimum(kind)
+  const exact = kind === 'mirror' || kind === 'revolve' || kind === 'resize'
+  if (unique.length < minimum || (exact && unique.length !== 1)) {
+    return { document, id: null, error: OPERATION_ERRORS[kind] }
+  }
+  if (unique.some((id) => nodes[id].consumedBy)) {
+    return { document, id: null, error: 'Um sólido já faz parte de outra operação.' }
+  }
+  for (const id of unique) {
+    for (const other of unique) {
+      if (id !== other && isAncestor(document, id, other)) {
+        return { document, id: null, error: 'Não é possível agrupar um sólido com um ancestral.' }
+      }
+    }
+  }
+  if (operationNeedsFlat(kind) && unique.some((id) => !hasFlatForm(nodes[id]))) {
+    return {
+      document,
+      id: null,
+      error: 'Essa operação só aceita perfis, offset, casca 2D ou projeção.'
+    }
+  }
+
+  const centroid = averagePosition(unique.map((id) => nodes[id].transform.position))
+  const id = crypto.randomUUID()
+  const name = nextName(document, LABELS[kind])
+  const operation = createOperationNode(
+    document,
+    kind,
+    unique.map((childId) => nodes[childId]),
+    {
+      id,
+      name,
+      visible: true,
+      locked: false,
+      enabled: true,
+      consumedBy: null,
+      transform: { position: centroid, rotation: { x: 0, y: 0, z: 0 } },
+      appearance: { ...nodes[unique[0]].appearance }
+    }
+  )
+  const nextNodes: Record<string, FeatureNode> = { ...nodes, [id]: operation }
+  for (const childId of unique) {
+    const child = nextNodes[childId]
+    nextNodes[childId] = {
+      ...child,
+      consumedBy: id,
+      transform: {
+        rotation: child.transform.rotation,
+        position: {
+          x: round3(child.transform.position.x - centroid.x),
+          y: round3(child.transform.position.y - centroid.y),
+          z: round3(child.transform.position.z - centroid.z)
+        }
+      }
+    }
+  }
+  return { document: withModel(document, nextNodes), id, error: null }
+}
+
 export function deleteNodes(document: ProjectDocument, ids: string[]): ProjectDocument {
   const current = nodesOf(document)
-  const remove = new Set<string>()
-  const visit = (id: string): void => {
-    if (remove.has(id) || !current[id]) return
-    remove.add(id)
-    const node = current[id]
-    if (isBooleanNode(node)) node.childIds.forEach(visit)
-  }
-  ids.forEach(visit)
-
+  const remove = new Set(ids.filter((id) => current[id]))
   let nodes: Record<string, FeatureNode> = { ...current }
-  for (const id of remove) {
-    const node = nodes[id]
-    const parentId = node.consumedBy
-    if (!parentId || remove.has(parentId)) continue
-    const parent = asBoolean(nodes[parentId])
-    if (!parent) continue
-    nodes[parentId] = { ...parent, childIds: parent.childIds.filter((childId) => childId !== id) }
+  const releases = collectReleases(nodes, remove)
+  const promoted = new Map<string, string[]>()
+  for (const release of releases) {
+    const child = nodes[release.id]
+    nodes[release.id] = { ...child, consumedBy: release.parentId, transform: release.transform }
+    const listed = promoted.get(release.slot) ?? []
+    listed.push(release.id)
+    promoted.set(release.slot, listed)
+  }
+  for (const node of Object.values(nodes)) {
+    if (!isGroupNode(node) || remove.has(node.id)) continue
+    let changed = false
+    const childIds = node.childIds.flatMap((childId) => {
+      if (!remove.has(childId)) return [childId]
+      changed = true
+      return promoted.get(childId) ?? []
+    })
+    if (changed) nodes = { ...nodes, [node.id]: { ...node, childIds } }
   }
   for (const id of remove) {
     const next = { ...nodes }
     delete next[id]
     nodes = next
   }
-  return pruneAssets(withModel(document, repairBooleans(nodes)))
+  return pruneAssets(withModel(document, repairOperations(repairBooleans(nodes))))
+}
+
+interface ReleasedChild {
+  id: string
+  parentId: string | null
+  slot: string
+  transform: Transform
+}
+
+export function groupToToggle(
+  document: ProjectDocument,
+  ids: string[],
+  kind: BooleanKind | OperationKind
+): string | null {
+  const nodes = nodesOf(document)
+  const unique = [...new Set(ids)].filter((id) => nodes[id])
+  if (unique.length === 1) {
+    const node = nodes[unique[0]]
+    if (isGroupNode(node) && node.kind === kind) return node.id
+  }
+  if (unique.length === 0) return null
+  const parentId = nodes[unique[0]].consumedBy
+  if (!parentId) return null
+  const parent = nodes[parentId]
+  if (!parent || !isGroupNode(parent) || parent.kind !== kind) return null
+  if (unique.some((id) => nodes[id].consumedBy !== parentId)) return null
+  const sameChildren =
+    parent.childIds.length === unique.length && parent.childIds.every((id) => unique.includes(id))
+  return sameChildren ? parentId : null
+}
+
+function collectReleases(nodes: Record<string, FeatureNode>, remove: Set<string>): ReleasedChild[] {
+  const releases: ReleasedChild[] = []
+  const visit = (id: string, slot: string, parentId: string | null, prefix: Transform): void => {
+    const node = nodes[id]
+    if (!node) return
+    if (!remove.has(id)) {
+      releases.push({
+        id,
+        parentId,
+        slot,
+        transform: composeTransform(prefix, node.transform)
+      })
+      return
+    }
+    if (!isGroupNode(node)) return
+    const nextPrefix = composeTransform(prefix, node.transform)
+    node.childIds.forEach((childId) => visit(childId, slot, parentId, nextPrefix))
+  }
+  for (const id of remove) {
+    const node = nodes[id]
+    if (!node || !isGroupNode(node)) continue
+    if (node.consumedBy && remove.has(node.consumedBy)) continue
+    node.childIds.forEach((childId) => visit(childId, id, node.consumedBy, node.transform))
+  }
+  return releases
 }
 
 export function patchNode(
@@ -324,6 +497,7 @@ export function patchNode(
     name: patch.name ?? node.name,
     visible: patch.visible ?? node.visible,
     locked: patch.locked ?? node.locked,
+    enabled: patch.enabled ?? node.enabled,
     transform: patch.transform ? roundTransform(patch.transform) : node.transform,
     appearance: patch.appearance ?? node.appearance
   }
@@ -356,6 +530,9 @@ export function patchNode(
     const limit = booleanRadiusLimit(localBounds(document, node))
     next = { ...next, rounding: Math.min(limit, rounding) }
   }
+  if (isOperationNode(next) && isOperationNode(node)) {
+    next = patchOperation(next, node, patch)
+  }
   if (isComponentNode(next) && isComponentNode(node)) {
     next = {
       ...next,
@@ -380,12 +557,12 @@ export function setNodeTransform(
 export function bakeScale(document: ProjectDocument, id: string, scale: Vec3): ProjectDocument {
   const node = nodesOf(document)[id]
   if (!node || isNearlyOne(scale)) return document
-  const ids = isBooleanNode(node) ? [id, ...collectDescendants(node, nodesOf(document))] : [id]
+  const ids = isGroupNode(node) ? [id, ...collectDescendants(node, nodesOf(document))] : [id]
   const nodes = { ...nodesOf(document) }
   for (const targetId of ids) {
     const target = nodes[targetId]
     const position =
-      isBooleanNode(node) && targetId !== id
+      isGroupNode(node) && targetId !== id
         ? roundVec(scaleVec(target.transform.position, scale))
         : target.transform.position
     const moved = { ...target, transform: { ...target.transform, position } }
@@ -394,17 +571,14 @@ export function bakeScale(document: ProjectDocument, id: string, scale: Vec3): P
   return withModel(document, nodes)
 }
 
-export function collectDescendants(
-  node: BooleanNode,
-  nodes: Record<string, FeatureNode>
-): string[] {
+export function collectDescendants(node: GroupNode, nodes: Record<string, FeatureNode>): string[] {
   const ids: string[] = []
-  const walk = (current: BooleanNode): void => {
+  const walk = (current: GroupNode): void => {
     for (const childId of current.childIds) {
       const child = nodes[childId]
       if (!child) continue
       ids.push(childId)
-      if (isBooleanNode(child)) walk(child)
+      if (isGroupNode(child)) walk(child)
     }
   }
   walk(node)
@@ -711,7 +885,7 @@ function repairBooleans(nodes: Record<string, FeatureNode>): Record<string, Feat
           consumedBy: booleanNode.consumedBy,
           transform: composeTransform(booleanNode.transform, child.transform)
         }
-        const parent = booleanNode.consumedBy ? asBoolean(current[booleanNode.consumedBy]) : null
+        const parent = booleanNode.consumedBy ? asGroup(current[booleanNode.consumedBy]) : null
         if (parent) {
           current[parent.id] = {
             ...parent,
@@ -721,7 +895,7 @@ function repairBooleans(nodes: Record<string, FeatureNode>): Record<string, Feat
           }
         }
       } else if (existing.length === 0 && booleanNode.consumedBy) {
-        const parent = asBoolean(current[booleanNode.consumedBy])
+        const parent = asGroup(current[booleanNode.consumedBy])
         if (parent) {
           current[parent.id] = {
             ...parent,
@@ -731,6 +905,53 @@ function repairBooleans(nodes: Record<string, FeatureNode>): Record<string, Feat
       }
       const next = { ...current }
       delete next[booleanNode.id]
+      current = next
+      break
+    }
+  }
+  return current
+}
+
+function repairOperations(nodes: Record<string, FeatureNode>): Record<string, FeatureNode> {
+  let current = { ...nodes }
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const node of Object.values(current)) {
+      if (!isOperationNode(node)) continue
+      const existing = node.childIds.filter((childId) => current[childId])
+      const minimum = operationMinimum(node.kind)
+      if (existing.length >= minimum && existing.length === node.childIds.length) continue
+      changed = true
+      if (existing.length >= minimum) {
+        current = { ...current, [node.id]: { ...node, childIds: existing } }
+        break
+      }
+      if (existing.length === 1) {
+        const child = current[existing[0]]
+        current[child.id] = {
+          ...child,
+          consumedBy: node.consumedBy,
+          transform: composeTransform(node.transform, child.transform)
+        }
+        const parent = node.consumedBy ? asGroup(current[node.consumedBy]) : null
+        if (parent) {
+          current[parent.id] = {
+            ...parent,
+            childIds: parent.childIds.map((childId) => (childId === node.id ? child.id : childId))
+          }
+        }
+      } else if (existing.length === 0 && node.consumedBy) {
+        const parent = asGroup(current[node.consumedBy])
+        if (parent) {
+          current[parent.id] = {
+            ...parent,
+            childIds: parent.childIds.filter((childId) => childId !== node.id)
+          }
+        }
+      }
+      const next = { ...current }
+      delete next[node.id]
       current = next
       break
     }
@@ -766,6 +987,30 @@ function applyDimensionScale(node: FeatureNode, scale: Vec3): FeatureNode {
     return { ...node, rounding: round3(Math.max(0, node.rounding * factor)) }
   }
   if (isProfileNode(node)) return scaleProfile(node, scale)
+  if (isOffsetNode(node)) {
+    const planar = (Math.abs(scale.x) + Math.abs(scale.y)) / 2
+    return {
+      ...node,
+      distance: round3(node.distance * planar),
+      extrusion: { ...node.extrusion, height: scaledSize(node.extrusion.height, scale.z) }
+    }
+  }
+  if (isHull2dNode(node) || isProjectionNode(node)) {
+    return {
+      ...node,
+      extrusion: { ...node.extrusion, height: scaledSize(node.extrusion.height, scale.z) }
+    }
+  }
+  if (isResizeNode(node)) {
+    return {
+      ...node,
+      size: {
+        x: round3(Math.max(0, node.size.x * Math.abs(scale.x))),
+        y: round3(Math.max(0, node.size.y * Math.abs(scale.y))),
+        z: round3(Math.max(0, node.size.z * Math.abs(scale.z)))
+      }
+    }
+  }
   if (isComponentNode(node)) {
     return {
       ...node,
@@ -890,4 +1135,128 @@ export function createComponentInstance(
 function asBoolean(node: FeatureNode | undefined): BooleanNode | null {
   if (!node || !isBooleanNode(node)) return null
   return node
+}
+
+function asGroup(node: FeatureNode | undefined): GroupNode | null {
+  if (!node || !isGroupNode(node)) return null
+  return node
+}
+
+function createOperationNode(
+  document: ProjectDocument,
+  kind: OperationKind,
+  children: FeatureNode[],
+  shared: Omit<OffsetNode, 'kind' | 'childIds' | 'mode' | 'distance' | 'chamfer' | 'extrusion'>
+): OperationNode {
+  const childIds = children.map((child) => child.id)
+  const extrusion = extrusionFrom(children[0])
+  if (kind === 'offset') {
+    const node: OffsetNode = {
+      ...shared,
+      kind: 'offset',
+      childIds,
+      mode: 'radius',
+      distance: 1,
+      chamfer: false,
+      extrusion
+    }
+    return node
+  }
+  if (kind === 'hull2d') {
+    const node: Hull2dNode = { ...shared, kind: 'hull2d', childIds, extrusion }
+    return node
+  }
+  if (kind === 'hull') {
+    const node: HullNode = { ...shared, kind: 'hull', childIds }
+    return node
+  }
+  if (kind === 'mirror') {
+    const node: MirrorNode = { ...shared, kind: 'mirror', childIds, axis: 'x' }
+    return node
+  }
+  if (kind === 'revolve') {
+    const node: RevolveNode = { ...shared, kind: 'revolve', childIds, angle: 360, start: 0 }
+    return node
+  }
+  if (kind === 'projection') {
+    const node: ProjectionNode = { ...shared, kind: 'projection', childIds, cut: false, extrusion }
+    return node
+  }
+  if (kind === 'resize') {
+    const node: ResizeNode = {
+      ...shared,
+      kind: 'resize',
+      childIds,
+      size: initialResize(document, children[0]),
+      auto: false
+    }
+    return node
+  }
+  const node: MinkowskiNode = { ...shared, kind: 'minkowski', childIds }
+  return node
+}
+
+function extrusionFrom(node: FeatureNode | undefined): Extrusion {
+  if (node && hasOwnExtrusion(node)) return { ...node.extrusion }
+  return defaultExtrusion()
+}
+
+function initialResize(document: ProjectDocument, node: FeatureNode | undefined): Vec3 {
+  if (!node) return { x: 10, y: 10, z: 10 }
+  return boundsSize(localBounds(document, node))
+}
+
+function patchOperation(
+  next: OperationNode,
+  node: OperationNode,
+  patch: FeaturePatch
+): OperationNode {
+  if (isOffsetNode(next) && isOffsetNode(node)) {
+    const mode = patch.offsetMode ?? node.mode
+    return {
+      ...next,
+      mode,
+      distance: round3(patch.distance ?? node.distance),
+      chamfer: mode === 'delta' ? (patch.offsetChamfer ?? node.chamfer) : false,
+      extrusion: sanitizeExtrusion(patch.extrusion ?? node.extrusion)
+    }
+  }
+  if (isHull2dNode(next) && isHull2dNode(node)) {
+    return { ...next, extrusion: sanitizeExtrusion(patch.extrusion ?? node.extrusion) }
+  }
+  if (isMirrorNode(next) && isMirrorNode(node)) {
+    return { ...next, axis: patch.mirrorAxis ?? node.axis }
+  }
+  if (isRevolveNode(next) && isRevolveNode(node)) {
+    return {
+      ...next,
+      angle: clampAngle(patch.revolveAngle ?? node.angle),
+      start: round3(patch.revolveStart ?? node.start)
+    }
+  }
+  if (isProjectionNode(next) && isProjectionNode(node)) {
+    return {
+      ...next,
+      cut: patch.projectionCut ?? node.cut,
+      extrusion: sanitizeExtrusion(patch.extrusion ?? node.extrusion)
+    }
+  }
+  if (isResizeNode(next) && isResizeNode(node)) {
+    const size = patch.size ?? node.size
+    return {
+      ...next,
+      auto: patch.resizeAuto ?? node.auto,
+      size: {
+        x: round3(Math.max(0, size.x)),
+        y: round3(Math.max(0, size.y)),
+        z: round3(Math.max(0, size.z))
+      }
+    }
+  }
+  return next
+}
+
+function clampAngle(value: number): number {
+  if (!Number.isFinite(value)) return 360
+  return round3(Math.min(360, Math.max(0.001, value)))
 }

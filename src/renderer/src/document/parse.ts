@@ -10,10 +10,20 @@ import {
   type EllipseNode,
   type Extrusion,
   type FeatureNode,
+  type Hull2dNode,
+  type HullNode,
+  type MinkowskiNode,
+  type MirrorAxis,
+  type MirrorNode,
   type ModelFile,
   type NgonNode,
+  type OffsetMode,
+  type OffsetNode,
   type ProjectDocument,
+  type ProjectionNode,
   type RectNode,
+  type ResizeNode,
+  type RevolveNode,
   type SphereNode,
   type StarNode,
   type SvgAsset,
@@ -26,8 +36,8 @@ import {
   type Vec3,
   DEFAULT_COLOR,
   DEFAULT_FONT,
-  isBooleanNode,
   isComponentNode,
+  isGroupNode,
   isRecord,
   isSvgNode
 } from './types'
@@ -99,7 +109,7 @@ function parseModelFile(nodesValue: unknown, assetsValue: unknown): ModelFile | 
   for (const node of Object.values(nodes)) {
     if (node.consumedBy !== null && !nodes[node.consumedBy]) return null
     if (isSvgNode(node) && !assets[node.assetId]) return null
-    if (!isBooleanNode(node)) continue
+    if (!isGroupNode(node)) continue
     for (const childId of node.childIds) {
       const child = nodes[childId]
       if (!child || child.consumedBy !== node.id) return null
@@ -149,6 +159,14 @@ function parseNode(id: string, value: unknown): FeatureNode | null {
   if (value.kind === 'text') return parseText(base, value)
   if (value.kind === 'svg') return parseSvg(base, value)
   if (value.kind === 'component') return parseComponent(base, value)
+  if (value.kind === 'offset') return parseOffset(base, value)
+  if (value.kind === 'hull2d') return parseHull2d(base, value)
+  if (value.kind === 'hull') return parseHull(base, value)
+  if (value.kind === 'mirror') return parseMirror(base, value)
+  if (value.kind === 'revolve') return parseRevolve(base, value)
+  if (value.kind === 'projection') return parseProjection(base, value)
+  if (value.kind === 'resize') return parseResize(base, value)
+  if (value.kind === 'minkowski') return parseMinkowski(base, value)
 
   if (isBooleanKind(value.kind)) {
     if (
@@ -279,6 +297,86 @@ function parseComponent(
   return { ...base, kind: 'component', componentName: value.componentName, scale }
 }
 
+function parseOffset(base: FeatureBaseFields, value: Record<string, unknown>): OffsetNode | null {
+  const childIds = parseChildIds(value.childIds)
+  const extrusion = parseExtrusion(value.extrusion)
+  const distance = finite(value.distance)
+  const mode = offsetMode(value.mode)
+  if (!childIds || !extrusion || distance === null || !mode || typeof value.chamfer !== 'boolean') {
+    return null
+  }
+  return { ...base, kind: 'offset', childIds, mode, distance, chamfer: value.chamfer, extrusion }
+}
+
+function parseHull2d(base: FeatureBaseFields, value: Record<string, unknown>): Hull2dNode | null {
+  const childIds = parseChildIds(value.childIds)
+  const extrusion = parseExtrusion(value.extrusion)
+  if (!childIds || !extrusion) return null
+  return { ...base, kind: 'hull2d', childIds, extrusion }
+}
+
+function parseHull(base: FeatureBaseFields, value: Record<string, unknown>): HullNode | null {
+  const childIds = parseChildIds(value.childIds)
+  if (!childIds) return null
+  return { ...base, kind: 'hull', childIds }
+}
+
+function parseMirror(base: FeatureBaseFields, value: Record<string, unknown>): MirrorNode | null {
+  const childIds = parseChildIds(value.childIds)
+  const axis = mirrorAxis(value.axis)
+  if (!childIds || !axis) return null
+  return { ...base, kind: 'mirror', childIds, axis }
+}
+
+function parseRevolve(base: FeatureBaseFields, value: Record<string, unknown>): RevolveNode | null {
+  const childIds = parseChildIds(value.childIds)
+  const angle = finite(value.angle)
+  const start = finite(value.start)
+  if (!childIds || angle === null || start === null) return null
+  return { ...base, kind: 'revolve', childIds, angle, start }
+}
+
+function parseProjection(
+  base: FeatureBaseFields,
+  value: Record<string, unknown>
+): ProjectionNode | null {
+  const childIds = parseChildIds(value.childIds)
+  const extrusion = parseExtrusion(value.extrusion)
+  if (!childIds || !extrusion || typeof value.cut !== 'boolean') return null
+  return { ...base, kind: 'projection', childIds, cut: value.cut, extrusion }
+}
+
+function parseResize(base: FeatureBaseFields, value: Record<string, unknown>): ResizeNode | null {
+  const childIds = parseChildIds(value.childIds)
+  const size = parseVec(value.size)
+  if (!childIds || !size || typeof value.auto !== 'boolean') return null
+  return { ...base, kind: 'resize', childIds, size, auto: value.auto }
+}
+
+function parseMinkowski(
+  base: FeatureBaseFields,
+  value: Record<string, unknown>
+): MinkowskiNode | null {
+  const childIds = parseChildIds(value.childIds)
+  if (!childIds) return null
+  return { ...base, kind: 'minkowski', childIds }
+}
+
+function parseChildIds(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.some((childId) => typeof childId !== 'string')) return null
+  return value
+}
+
+function offsetMode(value: unknown): OffsetMode | null {
+  if (value === 'radius' || value === 'delta') return value
+  return null
+}
+
+function mirrorAxis(value: unknown): MirrorAxis | null {
+  if (value === 'x' || value === 'y' || value === 'z') return value
+  return null
+}
+
 function parseExtrusion(value: unknown): Extrusion | null {
   if (!isRecord(value)) return null
   const height = finite(value.height)
@@ -309,6 +407,7 @@ interface FeatureBaseFields {
   consumedBy: string | null
   transform: Transform
   appearance: Appearance
+  enabled: boolean
 }
 
 function parseBase(id: string, value: Record<string, unknown>): FeatureBaseFields | null {
@@ -325,7 +424,8 @@ function parseBase(id: string, value: Record<string, unknown>): FeatureBaseField
     locked: value.locked,
     consumedBy: value.consumedBy,
     transform,
-    appearance
+    appearance,
+    enabled: value.enabled !== false
   }
 }
 

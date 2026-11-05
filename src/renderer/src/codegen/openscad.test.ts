@@ -3,9 +3,11 @@ import { generateOpenscad } from './openscad'
 import {
   createBoolean,
   createEmptyDocument,
+  createOperation,
   createPrimitive,
   createProfile,
-  createSvgProfile
+  createSvgProfile,
+  patchNode
 } from '../document/tree'
 import { activeModel, replaceActive, MAIN_FILE } from '../document/files'
 import {
@@ -187,6 +189,50 @@ translate([0, 0, 0])
     const assetId = Object.keys(activeModel(created.document).assets)[0]
     expect(source).toContain(`import("3dev-assets/${assetId}.svg", scale=3.78);`)
     expect(source).toContain('translate([-10, -5, 0])')
+  })
+
+  it('keeps a root profile on linear_extrude', () => {
+    const profile = createProfile(createEmptyDocument(), 'rect')
+    const source = generateOpenscad(profile.document)
+    expect(source).toContain('linear_extrude(height=4, center=true, twist=0, scale=1)')
+    expect(source).toContain('rect(size=[20, 12], anchor=CENTER);')
+    expect(source).not.toContain('offset(')
+  })
+
+  it('emits the shared OpenSCAD operations', () => {
+    const circle = createProfile(createEmptyDocument(), 'circle')
+    const offset = createOperation(circle.document, 'offset', [circle.id])
+    expect(generateOpenscad(offset.document)).toContain('offset(r=1)')
+
+    const first = createPrimitive(createEmptyDocument(), 'cuboid')
+    const second = createPrimitive(first.document, 'sphere')
+    const hull = createOperation(second.document, 'hull', [first.id, second.id])
+    expect(generateOpenscad(hull.document)).toContain('hull()')
+
+    const mirrored = createOperation(first.document, 'mirror', [first.id])
+    expect(generateOpenscad(mirrored.document)).toContain('mirror([1, 0, 0])')
+
+    const profile = createProfile(createEmptyDocument(), 'circle')
+    const revolve = createOperation(profile.document, 'revolve', [profile.id])
+    expect(generateOpenscad(revolve.document)).toContain('rotate_extrude(angle=360)')
+
+    const projected = createOperation(first.document, 'projection', [first.id])
+    expect(generateOpenscad(projected.document)).toContain('projection(cut=false)')
+
+    const resized = createOperation(first.document, 'resize', [first.id])
+    expect(generateOpenscad(resized.document)).toContain('resize([20, 20, 20], auto=false)')
+
+    const summed = createOperation(second.document, 'minkowski', [first.id, second.id])
+    expect(generateOpenscad(summed.document)).toContain('minkowski()')
+  })
+
+  it('emits the original solid when an operation is inactive', () => {
+    const profile = createProfile(createEmptyDocument(), 'circle')
+    const offset = createOperation(profile.document, 'offset', [profile.id])
+    if (!offset.id) throw new Error('expected offset')
+    const source = generateOpenscad(patchNode(offset.document, offset.id, { enabled: false }))
+    expect(source).not.toContain('offset(')
+    expect(source).toContain('circle(d=')
   })
 
   it('keeps boolean children in local coordinates after creation', () => {

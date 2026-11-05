@@ -56,7 +56,7 @@ export function AppShell(): React.JSX.Element {
         </aside>
         <div className="flex min-w-0 flex-1 flex-col">
           <Toolbar />
-          <div className="relative min-h-0 flex-1">
+          <div className="relative z-0 min-h-0 flex-1">
             <Viewport />
           </div>
           <CodePanel source={source} />

@@ -1,18 +1,36 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
+  Blend,
+  Box,
+  Boxes,
   Component,
+  FlipHorizontal2,
+  Hexagon,
+  Maximize2,
   MousePointer2,
   Move,
+  Projector,
   Rotate3d,
+  RotateCw,
   Scaling,
+  Square,
   Shapes,
   Spline,
   SquaresIntersect,
   SquaresSubtract,
   SquaresUnite,
+  UnfoldHorizontal,
   type LucideIcon
 } from 'lucide-react'
-import type { BooleanKind, EditorTool } from '../document/types'
+import {
+  type BooleanKind,
+  type EditorTool,
+  type OperationKind,
+  isGroupEnabled,
+  isGroupNode,
+  operationNeedsFlat
+} from '../document/types'
 import { componentNames } from '../document/files'
 import { useEditor } from '../document/store'
 import { PRIMITIVES, PROFILES } from './shapeCatalog'
@@ -30,43 +48,41 @@ const BOOLEANS: { kind: BooleanKind; label: string; icon: LucideIcon }[] = [
   { kind: 'intersection', label: 'Interseção', icon: SquaresIntersect }
 ]
 
+const OPERATIONS: { kind: OperationKind; label: string; icon: LucideIcon }[] = [
+  { kind: 'offset', label: 'Offset', icon: UnfoldHorizontal },
+  { kind: 'hull2d', label: 'Casca 2D', icon: Hexagon },
+  { kind: 'hull', label: 'Casca 3D', icon: Boxes },
+  { kind: 'mirror', label: 'Espelhar', icon: FlipHorizontal2 },
+  { kind: 'revolve', label: 'Revolução', icon: RotateCw },
+  { kind: 'projection', label: 'Projeção', icon: Projector },
+  { kind: 'resize', label: 'Redimensionar', icon: Maximize2 },
+  { kind: 'minkowski', label: 'Minkowski', icon: Blend }
+]
+
+const FLAT_OPERATIONS = OPERATIONS.filter((item) => operationNeedsFlat(item.kind))
+const SOLID_OPERATIONS = OPERATIONS.filter((item) => !operationNeedsFlat(item.kind))
+
+type ToolbarMenuId = 'shapes' | 'components' | 'solid' | 'flat'
+
 export function Toolbar(): React.JSX.Element {
   const tool = useEditor((state) => state.tool)
   const document = useEditor((state) => state.document)
+  const activeGroup = useEditor((state) => {
+    if (state.selection.length !== 1) return null
+    const node = state.document.files[state.document.activeFile]?.nodes[state.selection[0]]
+    if (!node || !isGroupNode(node) || !isGroupEnabled(node)) return null
+    return node.kind
+  })
   const components = componentNames(document).filter((name) => name !== document.activeFile)
-  const [open, setOpen] = useState(false)
-  const [componentsOpen, setComponentsOpen] = useState(false)
-  const menuId = useId()
-  const componentMenuId = useId()
-  const rootRef = useRef<HTMLDivElement>(null)
-  const componentRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open && !componentsOpen) return
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      event.stopPropagation()
-      setOpen(false)
-      setComponentsOpen(false)
-    }
-    const onPointerDown = (event: PointerEvent): void => {
-      const target = event.target
-      if (target instanceof Node && rootRef.current?.contains(target)) return
-      if (target instanceof Node && componentRef.current?.contains(target)) return
-      setOpen(false)
-      setComponentsOpen(false)
-    }
-    window.addEventListener('keydown', onKeyDown, true)
-    window.addEventListener('pointerdown', onPointerDown)
-    return () => {
-      window.removeEventListener('keydown', onKeyDown, true)
-      window.removeEventListener('pointerdown', onPointerDown)
-    }
-  }, [open, componentsOpen])
+  const [menu, setMenu] = useState<ToolbarMenuId | null>(null)
+  const close = (): void => setMenu(null)
+  const solidActive =
+    BOOLEANS.some((item) => item.kind === activeGroup) ||
+    SOLID_OPERATIONS.some((item) => item.kind === activeGroup)
+  const flatActive = FLAT_OPERATIONS.some((item) => item.kind === activeGroup)
 
   return (
-    <div className="relative z-20 flex h-11 shrink-0 items-center gap-1 border-b border-[#2c3240] bg-[#1b1e27] px-2">
+    <div className="relative z-30 flex h-11 shrink-0 items-center gap-1 overflow-x-auto border-b border-[#2c3240] bg-[#1b1e27] px-2">
       {MODES.map((item) => (
         <IconButton
           key={item.tool}
@@ -78,100 +94,166 @@ export function Toolbar(): React.JSX.Element {
         />
       ))}
       <Divider />
-      <div className="relative" ref={rootRef}>
-        <IconButton
-          label="Formas"
-          icon={Shapes}
-          active={open}
-          showTooltip={!open}
-          aria-haspopup="menu"
-          aria-expanded={open}
-          aria-controls={menuId}
-          onClick={() => {
-            setComponentsOpen(false)
-            setOpen((current) => !current)
-          }}
-        />
-        {open ? (
-          <div
-            id={menuId}
-            role="menu"
-            className="absolute top-full left-0 z-20 mt-1 w-44 rounded-md border border-[#2c3240] bg-[#1b1e27] p-1 shadow-xl"
-          >
-            <p className="px-2 pt-1 text-[10px] tracking-wide text-[#8b93a3] uppercase">3D</p>
-            {PRIMITIVES.map((item) => (
-              <MenuItem
-                key={item.kind}
-                label={item.label}
-                icon={item.icon}
-                onClick={() => useEditor.getState().addPrimitive(item.kind)}
-                close={() => setOpen(false)}
-              />
-            ))}
-            <p className="px-2 pt-2 text-[10px] tracking-wide text-[#8b93a3] uppercase">2D</p>
-            {PROFILES.map((item) => (
-              <MenuItem
-                key={item.kind}
-                label={item.label}
-                icon={item.icon}
-                onClick={() => useEditor.getState().addProfile(item.kind)}
-                close={() => setOpen(false)}
-              />
-            ))}
+      <ToolbarMenu id="shapes" label="Formas" icon={Shapes} menu={menu} setMenu={setMenu}>
+        <p className="px-2 pt-1 text-[10px] tracking-wide text-[#8b93a3] uppercase">3D</p>
+        {PRIMITIVES.map((item) => (
+          <MenuItem
+            key={item.kind}
+            label={item.label}
+            icon={item.icon}
+            onClick={() => useEditor.getState().addPrimitive(item.kind)}
+            close={close}
+          />
+        ))}
+        <p className="px-2 pt-2 text-[10px] tracking-wide text-[#8b93a3] uppercase">2D</p>
+        {PROFILES.map((item) => (
+          <MenuItem
+            key={item.kind}
+            label={item.label}
+            icon={item.icon}
+            onClick={() => useEditor.getState().addProfile(item.kind)}
+            close={close}
+          />
+        ))}
+        <MenuItem label="SVG" icon={Spline} onClick={() => void importSvg()} close={close} />
+      </ToolbarMenu>
+      <ToolbarMenu
+        id="components"
+        label="Componentes"
+        icon={Component}
+        menu={menu}
+        setMenu={setMenu}
+      >
+        {components.length === 0 ? (
+          <p className="px-2 py-1.5 text-[12px] text-[#8b93a3]">Nenhum componente</p>
+        ) : (
+          components.map((name) => (
             <MenuItem
-              label="SVG"
-              icon={Spline}
-              onClick={() => void importSvg()}
-              close={() => setOpen(false)}
+              key={name}
+              label={name}
+              icon={Component}
+              onClick={() => useEditor.getState().addComponent(name)}
+              close={close}
             />
-          </div>
-        ) : null}
-      </div>
-      <div className="relative" ref={componentRef}>
-        <IconButton
-          label="Componentes"
-          icon={Component}
-          active={componentsOpen}
-          showTooltip={!componentsOpen}
-          aria-haspopup="menu"
-          aria-expanded={componentsOpen}
-          aria-controls={componentMenuId}
-          onClick={() => {
-            setOpen(false)
-            setComponentsOpen((current) => !current)
-          }}
-        />
-        {componentsOpen ? (
-          <div
-            id={componentMenuId}
-            role="menu"
-            className="absolute top-full left-0 z-20 mt-1 w-44 rounded-md border border-[#2c3240] bg-[#1b1e27] p-1 shadow-xl"
-          >
-            {components.length === 0 ? (
-              <p className="px-2 py-1.5 text-[12px] text-[#8b93a3]">Nenhum componente</p>
-            ) : (
-              components.map((name) => (
-                <MenuItem
-                  key={name}
-                  label={name}
-                  icon={Component}
-                  onClick={() => useEditor.getState().addComponent(name)}
-                  close={() => setComponentsOpen(false)}
-                />
-              ))
-            )}
-          </div>
-        ) : null}
-      </div>
+          ))
+        )}
+      </ToolbarMenu>
       <Divider />
-      {BOOLEANS.map((item) => (
-        <IconButton
-          key={item.kind}
-          label={item.label}
-          icon={item.icon}
-          onClick={() => useEditor.getState().applyBoolean(item.kind)}
-        />
-      ))}
+      <ToolbarMenu
+        id="solid"
+        label="Operações 3D"
+        icon={Box}
+        menu={menu}
+        setMenu={setMenu}
+        highlighted={solidActive}
+      >
+        <p className="px-2 pt-1 text-[10px] tracking-wide text-[#8b93a3] uppercase">Booleanos</p>
+        {BOOLEANS.map((item) => (
+          <MenuItem
+            key={item.kind}
+            label={item.label}
+            icon={item.icon}
+            active={activeGroup === item.kind}
+            onClick={() => useEditor.getState().applyBoolean(item.kind)}
+            close={close}
+          />
+        ))}
+        <p className="px-2 pt-2 text-[10px] tracking-wide text-[#8b93a3] uppercase">Sólidos</p>
+        {SOLID_OPERATIONS.map((item) => (
+          <MenuItem
+            key={item.kind}
+            label={item.label}
+            icon={item.icon}
+            active={activeGroup === item.kind}
+            onClick={() => useEditor.getState().applyOperation(item.kind)}
+            close={close}
+          />
+        ))}
+      </ToolbarMenu>
+      <ToolbarMenu
+        id="flat"
+        label="Operações 2D"
+        icon={Square}
+        menu={menu}
+        setMenu={setMenu}
+        highlighted={flatActive}
+      >
+        {FLAT_OPERATIONS.map((item) => (
+          <MenuItem
+            key={item.kind}
+            label={item.label}
+            icon={item.icon}
+            active={activeGroup === item.kind}
+            onClick={() => useEditor.getState().applyOperation(item.kind)}
+            close={close}
+          />
+        ))}
+      </ToolbarMenu>
+    </div>
+  )
+}
+
+function ToolbarMenu({
+  id,
+  label,
+  icon,
+  menu,
+  setMenu,
+  highlighted = false,
+  children
+}: {
+  id: ToolbarMenuId
+  label: string
+  icon: LucideIcon
+  menu: ToolbarMenuId | null
+  setMenu: (menu: ToolbarMenuId | null) => void
+  highlighted?: boolean
+  children: React.ReactNode
+}): React.JSX.Element {
+  const open = menu === id
+  const menuId = useId()
+  const anchorRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const close = (): void => setMenu(null)
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      close()
+    }
+    const onPointerDown = (event: PointerEvent): void => {
+      const target = event.target
+      if (target instanceof Node && anchorRef.current?.contains(target)) return
+      if (target instanceof Node && menuRef.current?.contains(target)) return
+      close()
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    window.addEventListener('pointerdown', onPointerDown)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      window.removeEventListener('pointerdown', onPointerDown)
+    }
+  }, [open, setMenu])
+  return (
+    <div className="relative" ref={anchorRef}>
+      <IconButton
+        label={label}
+        icon={icon}
+        active={open || highlighted}
+        pressed={highlighted}
+        showTooltip={!open}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={menuId}
+        onClick={() => setMenu(open ? null : id)}
+      />
+      {open ? (
+        <AnchoredMenu id={menuId} anchorRef={anchorRef} menuRef={menuRef}>
+          {children}
+        </AnchoredMenu>
+      ) : null}
     </div>
   )
 }
@@ -218,27 +300,102 @@ function Tooltip({
   label: string
   children: React.ReactNode
 }): React.JSX.Element {
+  const anchorRef = useRef<HTMLDivElement>(null)
+  const [point, setPoint] = useState<AnchorPoint | null>(null)
+  const show = (): void => setPoint(anchorCenter(anchorRef.current))
+  const hide = (): void => setPoint(null)
   return (
-    <div className="group relative">
+    <div
+      ref={anchorRef}
+      className="relative"
+      onMouseEnter={show}
+      onMouseLeave={hide}
+      onFocus={show}
+      onBlur={hide}
+    >
       {children}
-      <span
-        aria-hidden="true"
-        className="pointer-events-none invisible absolute top-full left-1/2 z-30 mt-1.5 -translate-x-1/2 rounded-md border border-[#2c3240] bg-[#14161b] px-2 py-1 text-[11px] whitespace-nowrap text-[#e7e9ee] shadow-lg group-focus-within:visible group-hover:visible"
-      >
-        {label}
-      </span>
+      {point
+        ? createPortal(
+            <span
+              role="tooltip"
+              className="pointer-events-none fixed z-50 -translate-x-1/2 rounded-md border border-[#2c3240] bg-[#14161b] px-2 py-1 text-[11px] whitespace-nowrap text-[#e7e9ee] shadow-lg"
+              style={{ top: point.top, left: point.left }}
+            >
+              {label}
+            </span>,
+            document.body
+          )
+        : null}
     </div>
   )
+}
+
+function AnchoredMenu({
+  id,
+  anchorRef,
+  menuRef,
+  children
+}: {
+  id: string
+  anchorRef: React.RefObject<HTMLElement | null>
+  menuRef: React.RefObject<HTMLDivElement | null>
+  children: React.ReactNode
+}): React.JSX.Element | null {
+  const [point, setPoint] = useState<AnchorPoint | null>(null)
+  useLayoutEffect(() => {
+    const update = (): void => setPoint(anchorBelow(anchorRef.current))
+    update()
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+    }
+  }, [anchorRef])
+  if (!point) return null
+  return createPortal(
+    <div
+      ref={menuRef}
+      id={id}
+      role="menu"
+      className="fixed z-50 max-h-[70vh] w-44 overflow-auto rounded-md border border-[#2c3240] bg-[#1b1e27] p-1 shadow-xl"
+      style={{ top: point.top, left: point.left }}
+    >
+      {children}
+    </div>,
+    document.body
+  )
+}
+
+interface AnchorPoint {
+  top: number
+  left: number
+}
+
+function anchorBelow(element: HTMLElement | null): AnchorPoint | null {
+  if (!element) return null
+  const rect = element.getBoundingClientRect()
+  const width = 176
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
+  return { top: rect.bottom + 4, left }
+}
+
+function anchorCenter(element: HTMLElement | null): AnchorPoint | null {
+  if (!element) return null
+  const rect = element.getBoundingClientRect()
+  return { top: rect.bottom + 6, left: rect.left + rect.width / 2 }
 }
 
 function MenuItem({
   label,
   icon: Icon,
+  active = false,
   onClick,
   close
 }: {
   label: string
   icon: LucideIcon
+  active?: boolean
   onClick: () => void
   close: () => void
 }): React.JSX.Element {
@@ -246,7 +403,10 @@ function MenuItem({
     <button
       type="button"
       role="menuitem"
-      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-[#d5d8e0] hover:bg-[#2a3040]"
+      aria-pressed={active}
+      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] hover:bg-[#2a3040] ${
+        active ? 'bg-[#3a2a24] text-[#f2d2c4]' : 'text-[#d5d8e0]'
+      }`}
       onClick={() => {
         close()
         onClick()

@@ -1,7 +1,12 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { componentNames } from '../document/files'
 import { useEditor } from '../document/store'
 import { PRIMITIVES, PROFILES } from './shapeCatalog'
+
+const MENU_WIDTH = 176
+const MENU_LIMIT = 220
+const MARGIN = 8
 
 export function ContextMenu({
   x,
@@ -12,8 +17,13 @@ export function ContextMenu({
   y: number
   onClose: () => void
 }): React.JSX.Element {
-  const document = useEditor((state) => state.document)
-  const names = componentNames(document).filter((name) => name !== document.activeFile)
+  const project = useEditor((state) => state.document)
+  const names = componentNames(project).filter((name) => name !== project.activeFile)
+  const [viewport, setViewport] = useState(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight
+  }))
+  const placement = placeContextMenu(x, y, viewport.width, viewport.height)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -23,19 +33,28 @@ export function ContextMenu({
       onClose()
     }
     const onPointerDown = (): void => onClose()
+    const onResize = (): void =>
+      setViewport({ width: window.innerWidth, height: window.innerHeight })
     window.addEventListener('keydown', onKeyDown, true)
     window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('resize', onResize)
     return () => {
       window.removeEventListener('keydown', onKeyDown, true)
       window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('resize', onResize)
     }
   }, [onClose])
 
-  return (
+  return createPortal(
     <div
       role="menu"
-      className="fixed z-30 max-h-[70vh] w-52 overflow-auto rounded-md border border-[#2c3240] bg-[#1b1e27] p-1 shadow-xl"
-      style={{ left: x, top: y }}
+      className="fixed z-50 w-44 overflow-y-auto overscroll-contain rounded-md border border-[#2c3240] bg-[#1b1e27] p-1 shadow-xl"
+      style={{
+        left: placement.left,
+        top: placement.top,
+        bottom: placement.bottom,
+        maxHeight: placement.maxHeight
+      }}
       onPointerDown={(event) => event.stopPropagation()}
     >
       <p className="px-2 pt-1 text-[10px] tracking-wide text-[#8b93a3] uppercase">
@@ -73,8 +92,26 @@ export function ContextMenu({
           />
         ))
       )}
-    </div>
+    </div>,
+    document.body
   )
+}
+
+interface MenuPlacement {
+  left: number
+  top?: number
+  bottom?: number
+  maxHeight: number
+}
+
+function placeContextMenu(x: number, y: number, width: number, height: number): MenuPlacement {
+  const spaceBelow = Math.max(0, height - y - MARGIN)
+  const spaceAbove = Math.max(0, y - MARGIN)
+  const openUp = spaceBelow < MENU_LIMIT && spaceAbove > spaceBelow
+  const maxHeight = Math.min(MENU_LIMIT, openUp ? spaceAbove : spaceBelow)
+  const left = Math.max(MARGIN, Math.min(x, width - MENU_WIDTH - MARGIN))
+  if (openUp) return { left, bottom: height - y, maxHeight }
+  return { left, top: y, maxHeight }
 }
 
 function MenuRow({
@@ -90,7 +127,7 @@ function MenuRow({
     <button
       type="button"
       role="menuitem"
-      className="block w-full rounded-md px-2 py-1.5 text-left text-[12px] text-[#d5d8e0] hover:bg-[#2a3040]"
+      className="block w-full rounded-md px-2 py-1 text-left text-[12px] text-[#d5d8e0] hover:bg-[#2a3040]"
       onClick={() => {
         close()
         onClick()

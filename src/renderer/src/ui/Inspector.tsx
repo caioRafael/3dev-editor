@@ -7,15 +7,22 @@ import {
   type FeatureNode,
   type Vec2,
   type Vec3,
+  hasOwnExtrusion,
   isBooleanNode,
   isCircleNode,
   isComponentNode,
   isCuboidNode,
   isCylinderNode,
   isEllipseNode,
+  isGroupEnabled,
+  isGroupNode,
+  isMirrorNode,
   isNgonNode,
-  isProfileNode,
+  isOffsetNode,
+  isProjectionNode,
   isRectNode,
+  isResizeNode,
+  isRevolveNode,
   isSphereNode,
   isStarNode,
   isSvgNode,
@@ -238,9 +245,12 @@ function NodeFields({
           onCommit={(importScale) => useEditor.getState().updateNode(id, { importScale })}
         />
       ) : null}
-      {isProfileNode(node) ? (
-        <ExtrusionFields id={id} extrusion={node.extrusion} disabled={disabled} />
-      ) : null}
+      {isOffsetNode(node) ? <OffsetFields id={id} node={node} disabled={disabled} /> : null}
+      {isMirrorNode(node) ? <MirrorFields id={id} node={node} disabled={disabled} /> : null}
+      {isRevolveNode(node) ? <RevolveFields id={id} node={node} disabled={disabled} /> : null}
+      {isProjectionNode(node) ? <ProjectionFields id={id} node={node} disabled={disabled} /> : null}
+      {isResizeNode(node) ? <ResizeFields id={id} node={node} disabled={disabled} /> : null}
+      {hasOwnExtrusion(node) ? <OwnedExtrusion id={id} node={node} disabled={disabled} /> : null}
       {isTextNode(node) ? (
         <p className="text-[#8b93a3]">
           A prévia rápida usa Liberation Sans. A prévia exata usa a fonte instalada no OpenSCAD.
@@ -270,6 +280,18 @@ function NodeFields({
           })
         }
       />
+      {isGroupNode(node) ? (
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={isGroupEnabled(node)}
+            onChange={(event) =>
+              useEditor.getState().updateNode(id, { enabled: event.target.checked })
+            }
+          />
+          Ativa
+        </label>
+      ) : null}
       <label className="flex items-center gap-2">
         <input
           type="checkbox"
@@ -281,6 +303,180 @@ function NodeFields({
         Travado
       </label>
     </div>
+  )
+}
+
+function OwnedExtrusion({
+  id,
+  node,
+  disabled
+}: {
+  id: string
+  node: FeatureNode
+  disabled: boolean
+}): React.JSX.Element | null {
+  const hidden = useEditor((state) => {
+    if (!node.consumedBy) return false
+    const parent = state.document.files[state.document.activeFile]?.nodes[node.consumedBy]
+    return parent?.kind === 'offset' || parent?.kind === 'hull2d' || parent?.kind === 'revolve'
+  })
+  if (!hasOwnExtrusion(node) || hidden) return null
+  return <ExtrusionFields id={id} extrusion={node.extrusion} disabled={disabled} />
+}
+
+function OffsetFields({
+  id,
+  node,
+  disabled
+}: {
+  id: string
+  node: FeatureNode
+  disabled: boolean
+}): React.JSX.Element | null {
+  if (!isOffsetNode(node)) return null
+  return (
+    <>
+      <ChoiceField
+        label="Modo"
+        value={node.mode}
+        disabled={disabled}
+        options={[
+          { value: 'radius', label: 'Raio' },
+          { value: 'delta', label: 'Delta' }
+        ]}
+        onCommit={(offsetMode) => useEditor.getState().updateNode(id, { offsetMode })}
+      />
+      <NumberField
+        label="Distância"
+        value={node.distance}
+        disabled={disabled}
+        onCommit={(distance) => useEditor.getState().updateNode(id, { distance })}
+      />
+      {node.mode === 'delta' ? (
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={node.chamfer}
+            disabled={disabled}
+            onChange={(event) =>
+              useEditor.getState().updateNode(id, { offsetChamfer: event.target.checked })
+            }
+          />
+          Chanfro
+        </label>
+      ) : null}
+    </>
+  )
+}
+
+function MirrorFields({
+  id,
+  node,
+  disabled
+}: {
+  id: string
+  node: FeatureNode
+  disabled: boolean
+}): React.JSX.Element | null {
+  if (!isMirrorNode(node)) return null
+  return (
+    <ChoiceField
+      label="Eixo"
+      value={node.axis}
+      disabled={disabled}
+      options={[
+        { value: 'x', label: 'X' },
+        { value: 'y', label: 'Y' },
+        { value: 'z', label: 'Z' }
+      ]}
+      onCommit={(mirrorAxis) => useEditor.getState().updateNode(id, { mirrorAxis })}
+    />
+  )
+}
+
+function RevolveFields({
+  id,
+  node,
+  disabled
+}: {
+  id: string
+  node: FeatureNode
+  disabled: boolean
+}): React.JSX.Element | null {
+  if (!isRevolveNode(node)) return null
+  return (
+    <>
+      <NumberField
+        label="Ângulo"
+        value={node.angle}
+        disabled={disabled}
+        onCommit={(revolveAngle) => useEditor.getState().updateNode(id, { revolveAngle })}
+      />
+      <NumberField
+        label="Início"
+        value={node.start}
+        disabled={disabled}
+        onCommit={(revolveStart) => useEditor.getState().updateNode(id, { revolveStart })}
+      />
+    </>
+  )
+}
+
+function ProjectionFields({
+  id,
+  node,
+  disabled
+}: {
+  id: string
+  node: FeatureNode
+  disabled: boolean
+}): React.JSX.Element | null {
+  if (!isProjectionNode(node)) return null
+  return (
+    <label className="flex items-center gap-2">
+      <input
+        type="checkbox"
+        checked={node.cut}
+        disabled={disabled}
+        onChange={(event) =>
+          useEditor.getState().updateNode(id, { projectionCut: event.target.checked })
+        }
+      />
+      Cortar no plano XY
+    </label>
+  )
+}
+
+function ResizeFields({
+  id,
+  node,
+  disabled
+}: {
+  id: string
+  node: FeatureNode
+  disabled: boolean
+}): React.JSX.Element | null {
+  if (!isResizeNode(node)) return null
+  return (
+    <>
+      <VectorFields
+        label="Novo tamanho"
+        value={node.size}
+        disabled={disabled}
+        onCommit={(size) => useEditor.getState().updateNode(id, { size })}
+      />
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={node.auto}
+          disabled={disabled}
+          onChange={(event) =>
+            useEditor.getState().updateNode(id, { resizeAuto: event.target.checked })
+          }
+        />
+        Preservar proporção nos eixos zerados
+      </label>
+    </>
   )
 }
 

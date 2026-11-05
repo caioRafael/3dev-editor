@@ -1,23 +1,38 @@
 import Module, {
+  type CrossSection,
+  type JoinType,
   type Manifold,
   type ManifoldToplevel,
   type Vec2 as ManifoldVec2
 } from 'manifold-3d'
 import wasmUrl from 'manifold-3d/manifold.wasm?url'
-import { isNearlyOne, maxEdgeRadius } from '../document/math'
+import { boundsSize, isNearlyOne, maxEdgeRadius, resizeScale } from '../document/math'
 import {
   type BooleanKind,
   type Extrusion,
   type FeatureNode,
+  type OffsetNode,
   type ProfileNode,
   type ProjectDocument,
   type Transform,
   type Vec3,
+  hasFlatForm,
+  hasOwnExtrusion,
   isBooleanNode,
+  isGroupEnabled,
   isComponentNode,
   isCuboidNode,
   isCylinderNode,
+  isGroupNode,
+  isHull2dNode,
+  isHullNode,
+  isMinkowskiNode,
+  isMirrorNode,
+  isOffsetNode,
   isProfileNode,
+  isProjectionNode,
+  isResizeNode,
+  isRevolveNode,
   isSphereNode,
   isSvgNode
 } from '../document/types'
@@ -48,7 +63,7 @@ export async function buildBooleanMesh(
   fileName = document.activeFile
 ): Promise<SolidMeshData | null> {
   const node = document.files[fileName]?.nodes[nodeId]
-  if (!node || !isBooleanNode(node)) return null
+  if (!node || !isGroupNode(node)) return null
   const api = await getManifold()
   const solid = buildSolid(api, document, node, roundEdges, contours, fileName, [])
   if (!solid) return null
@@ -92,12 +107,23 @@ function serializeNode(
         : []
     }
   }
-  if (isBooleanNode(node)) {
+  if (isGroupNode(node)) {
     const nodes = document.files[fileName]?.nodes ?? {}
     return {
       kind: node.kind,
+      enabled: isGroupEnabled(node),
       transform,
-      rounding: node.rounding,
+      rounding: isBooleanNode(node) ? node.rounding : 0,
+      mode: isOffsetNode(node) ? node.mode : undefined,
+      distance: isOffsetNode(node) ? node.distance : undefined,
+      chamfer: isOffsetNode(node) ? node.chamfer : undefined,
+      axis: isMirrorNode(node) ? node.axis : undefined,
+      angle: isRevolveNode(node) ? node.angle : undefined,
+      start: isRevolveNode(node) ? node.start : undefined,
+      cut: isProjectionNode(node) ? node.cut : undefined,
+      size: isResizeNode(node) ? node.size : undefined,
+      auto: isResizeNode(node) ? node.auto : undefined,
+      extrusion: hasOwnExtrusion(node) ? node.extrusion : undefined,
       fn: document.fn,
       children: node.childIds.map((id) => {
         const child = nodes[id]
@@ -176,8 +202,77 @@ function buildSolid(
   if (isProfileNode(node)) {
     return extrudeContours(api, contours[node.id], node.extrusion, segments)
   }
-  if (!isBooleanNode(node)) return null
+  if (isGroupNode(node) && !isGroupEnabled(node)) {
+    return uniteParts(placedChildren(api, document, node, roundEdges, contours, ownerFile, stack))
+  }
+  if (isOffsetNode(node) || isHull2dNode(node) || isProjectionNode(node)) {
+    const section = buildFlatSection(api, document, node, contours, ownerFile, stack, segments)
+    if (!section) return null
+    return extrudeSection(section, node.extrusion, segments)
+  }
+  if (isRevolveNode(node)) {
+    return revolveChild(api, document, node, contours, ownerFile, stack, segments)
+  }
+  if (!isGroupNode(node)) return null
+  const parts = placedChildren(api, document, node, roundEdges, contours, ownerFile, stack)
+  if (parts.length === 0) return null
+  if (isBooleanNode(node)) {
+    let accumulator = parts[0]
+    for (let index = 1; index < parts.length; index += 1) {
+      const next = combine(node.kind, accumulator, parts[index])
+      accumulator.delete()
+      parts[index].delete()
+      accumulator = next
+    }
+    if (!roundEdges || node.rounding <= 0) return accumulator
+    return roundSolid(api, accumulator, node.rounding)
+  }
+  if (isHullNode(node)) {
+    const solid = api.Manifold.hull(parts)
+    releaseAll(parts, solid)
+    return solid
+  }
+  if (isMirrorNode(node)) {
+    const normal = node.axis === 'x' ? [1, 0, 0] : node.axis === 'y' ? [0, 1, 0] : [0, 0, 1]
+    const mirrored = parts[0].mirror(normal as [number, number, number])
+    release(parts[0], mirrored)
+    return mirrored
+  }
+  if (isResizeNode(node)) {
+    const box = parts[0].boundingBox()
+    const current = boundsSize({
+      min: { x: box.min[0], y: box.min[1], z: box.min[2] },
+      max: { x: box.max[0], y: box.max[1], z: box.max[2] }
+    })
+    const factor = resizeScale(current, node.size, node.auto)
+    const resized = parts[0].scale([factor.x, factor.y, factor.z])
+    release(parts[0], resized)
+    return resized
+  }
+  if (isMinkowskiNode(node)) {
+    let accumulator = parts[0]
+    for (let index = 1; index < parts.length; index += 1) {
+      const next = accumulator.minkowskiSum(parts[index])
+      release(accumulator, next)
+      release(parts[index], next)
+      accumulator = next
+    }
+    return accumulator
+  }
+  releaseAll(parts, null)
+  return null
+}
 
+function placedChildren(
+  api: ManifoldToplevel,
+  document: ProjectDocument,
+  node: FeatureNode,
+  roundEdges: boolean,
+  contours: Record<string, ContourSet>,
+  ownerFile: string,
+  stack: string[]
+): Manifold[] {
+  if (!isGroupNode(node)) return []
   const nodes = document.files[ownerFile]?.nodes ?? {}
   const parts: Manifold[] = []
   for (const childId of node.childIds) {
@@ -187,16 +282,7 @@ function buildSolid(
     if (!childSolid) continue
     parts.push(place(childSolid, child.transform))
   }
-  if (parts.length === 0) return null
-  let accumulator = parts[0]
-  for (let index = 1; index < parts.length; index += 1) {
-    const next = combine(node.kind, accumulator, parts[index])
-    accumulator.delete()
-    parts[index].delete()
-    accumulator = next
-  }
-  if (!roundEdges || node.rounding <= 0) return accumulator
-  return roundSolid(api, accumulator, node.rounding)
+  return parts
 }
 
 function buildComponentSolid(
@@ -256,6 +342,18 @@ function place(solid: Manifold, transform: Transform): Manifold {
   return moved
 }
 
+function uniteParts(parts: Manifold[]): Manifold | null {
+  if (parts.length === 0) return null
+  let accumulator = parts[0]
+  for (let index = 1; index < parts.length; index += 1) {
+    const next = combine('union', accumulator, parts[index])
+    accumulator.delete()
+    parts[index].delete()
+    accumulator = next
+  }
+  return accumulator
+}
+
 function combine(kind: BooleanKind, target: Manifold, tool: Manifold): Manifold {
   if (kind === 'union') return target.add(tool)
   if (kind === 'difference') return target.subtract(tool)
@@ -274,6 +372,178 @@ export async function buildProfileMesh(
     return readMesh(solid)
   } finally {
     solid.delete()
+  }
+}
+
+function revolveChild(
+  api: ManifoldToplevel,
+  document: ProjectDocument,
+  node: FeatureNode,
+  contours: Record<string, ContourSet>,
+  ownerFile: string,
+  stack: string[],
+  segments: number
+): Manifold | null {
+  if (!isRevolveNode(node)) return null
+  const child = document.files[ownerFile]?.nodes[node.childIds[0] ?? '']
+  if (!child?.visible || !hasFlatForm(child)) return null
+  const section = buildFlatSection(api, document, child, contours, ownerFile, stack, segments)
+  if (!section) return null
+  const placed = placeSection(section, child.transform)
+  let solid = placed.revolve(segments, node.angle)
+  placed.delete()
+  if (node.start !== 0) {
+    const turned = solid.rotate([0, 0, node.start])
+    release(solid, turned)
+    solid = turned
+  }
+  return solid
+}
+
+function buildFlatSection(
+  api: ManifoldToplevel,
+  document: ProjectDocument,
+  node: FeatureNode,
+  contours: Record<string, ContourSet>,
+  ownerFile: string,
+  stack: string[],
+  segments: number
+): CrossSection | null {
+  if (isGroupNode(node) && !isGroupEnabled(node)) {
+    if (!isOffsetNode(node) && !isHull2dNode(node)) return null
+    const sections = flatChildren(api, document, node, contours, ownerFile, stack, segments)
+    return uniteSections(api, sections)
+  }
+  if (isProfileNode(node)) return sectionFromContours(api, contours[node.id])
+  if (isProjectionNode(node))
+    return projectChildren(api, document, node, contours, ownerFile, stack)
+  if (!isOffsetNode(node) && !isHull2dNode(node)) return null
+  const sections = flatChildren(api, document, node, contours, ownerFile, stack, segments)
+  if (sections.length === 0) return null
+  if (isHull2dNode(node)) {
+    const hull = api.CrossSection.hull(sections)
+    releaseSections(sections, hull)
+    return hull
+  }
+  const united = uniteSections(api, sections)
+  if (!united) return null
+  return offsetSection(united, node, segments)
+}
+
+function projectChildren(
+  api: ManifoldToplevel,
+  document: ProjectDocument,
+  node: FeatureNode,
+  contours: Record<string, ContourSet>,
+  ownerFile: string,
+  stack: string[]
+): CrossSection | null {
+  if (!isProjectionNode(node)) return null
+  const parts = placedChildren(api, document, node, false, contours, ownerFile, stack)
+  if (parts.length === 0) return null
+  let solid = parts[0]
+  for (let index = 1; index < parts.length; index += 1) {
+    const next = solid.add(parts[index])
+    release(solid, next)
+    release(parts[index], next)
+    solid = next
+  }
+  const section = node.cut ? solid.slice(0) : solid.project()
+  solid.delete()
+  return section
+}
+
+function flatChildren(
+  api: ManifoldToplevel,
+  document: ProjectDocument,
+  node: FeatureNode,
+  contours: Record<string, ContourSet>,
+  ownerFile: string,
+  stack: string[],
+  segments: number
+): CrossSection[] {
+  if (!isGroupNode(node)) return []
+  const nodes = document.files[ownerFile]?.nodes ?? {}
+  const sections: CrossSection[] = []
+  for (const childId of node.childIds) {
+    const child = nodes[childId]
+    if (!child?.visible || !hasFlatForm(child)) continue
+    const section = buildFlatSection(api, document, child, contours, ownerFile, stack, segments)
+    if (!section) continue
+    sections.push(placeSection(section, child.transform))
+  }
+  return sections
+}
+
+function sectionFromContours(
+  api: ManifoldToplevel,
+  contours: ContourSet | undefined
+): CrossSection | null {
+  if (!contours || contours.rings.length === 0) return null
+  const polygons = contours.rings
+    .map((ring) => ring.points.map((point): ManifoldVec2 => [point.x, point.y]))
+    .filter((ring) => ring.length >= 3)
+  if (polygons.length === 0) return null
+  const section = new api.CrossSection(polygons, contours.fillRule)
+  if (section.isEmpty()) {
+    section.delete()
+    return null
+  }
+  return section
+}
+
+function placeSection(section: CrossSection, transform: Transform): CrossSection {
+  const rotated = section.rotate(transform.rotation.z)
+  if (rotated !== section) section.delete()
+  const moved = rotated.translate([transform.position.x, transform.position.y])
+  if (moved !== rotated) rotated.delete()
+  return moved
+}
+
+function offsetSection(section: CrossSection, node: OffsetNode, segments: number): CrossSection {
+  const join: JoinType = node.mode === 'radius' ? 'Round' : node.chamfer ? 'Square' : 'Miter'
+  const next = section.offset(node.distance, join, 100, Math.max(8, segments))
+  if (next !== section) section.delete()
+  return next
+}
+
+function uniteSections(api: ManifoldToplevel, sections: CrossSection[]): CrossSection | null {
+  if (sections.length === 0) return null
+  if (sections.length === 1) return sections[0]
+  const united = api.CrossSection.union(sections)
+  releaseSections(sections, united)
+  return united
+}
+
+function extrudeSection(
+  section: CrossSection,
+  extrusion: Extrusion,
+  segments: number
+): Manifold | null {
+  try {
+    if (section.isEmpty()) return null
+    const scale = positiveScale(extrusion.scale)
+    return section.extrude(
+      positive(extrusion.height),
+      extrusionDivisions(extrusion, segments),
+      extrusion.twist,
+      [scale, scale],
+      true
+    )
+  } finally {
+    section.delete()
+  }
+}
+
+function releaseSections(sections: CrossSection[], result: CrossSection | null): void {
+  for (const section of sections) {
+    if (section !== result) section.delete()
+  }
+}
+
+function releaseAll(parts: Manifold[], result: Manifold | null): void {
+  for (const part of parts) {
+    if (part !== result) part.delete()
   }
 }
 
