@@ -45,7 +45,9 @@ export function StatusBar(): React.JSX.Element {
       </button>
       <span className="truncate">{openscad}</span>
       <span className="ml-auto truncate text-[#d5d8e0]">{status}</span>
-      <span className="hidden xl:inline">Alt+direito orbita · meio move · roda zoom</span>
+      <span className="hidden xl:inline">
+        Esquerdo arrasta orbita · clique seleciona · meio move · roda zoom
+      </span>
     </footer>
   )
 }

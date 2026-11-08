@@ -41,20 +41,22 @@ A janela tem a barra de menu, a coluna esquerda, a barra de ferramentas, o viewp
 | --- | --- |
 | Barra superior | Novo, Abrir, Salvar, Exportar SCAD, Renderizar e Exportar STL. À direita, a pasta do projeto ou “Sem arquivo”. |
 | Modelo | Sólidos raiz do arquivo ativo. Filhos de um booleano aparecem indentados. |
-| Arquivos | Árvore da pasta: JSON, `code/main.scad`, `components` e `output`. **Novo componente** cria outro arquivo de cena. |
-| Ferramentas | Ícones de selecionar, mover, girar e escalar; menus de formas e de componentes; união, diferença e interseção. |
-| Viewport | Cena Three.js, grade de 10 mm, eixos e câmera isométrica. |
+| Arquivos | Árvore da pasta, com ícone de pasta ou de arquivo: JSON, `code/main.scad`, `components` e `output`. As pastas abrem e fecham. **Novo componente** cria o arquivo na hora. |
+| Ferramentas | Ícones de selecionar, mover, girar e escalar; menus de formas, componentes, operações 3D e operações 2D. |
+| Viewport | Cena Three.js, grade de 10 mm, eixos, câmera isométrica e o cartão que explica a função atual. |
 | OpenSCAD | Editor Monaco com o fonte do arquivo ativo. Pode ser editado. |
 | Propriedades | Nome, transformação, dimensões, extrusão, cor, opacidade e trava do item selecionado. |
 | Barra de status | Unidade (`mm`), `$fn`, modo de prévia, disponibilidade do OpenSCAD e a última mensagem. |
 
-A câmera nasce em `[90, -140, 80]`, com “cima” em Z, olhando para a origem. Alt com o botão direito orbita, o botão do meio desloca e a roda aproxima. O botão esquerdo seleciona sólidos e usa os gizmos. O botão direito, sem Alt, abre o menu de contexto para acrescentar uma forma ou um componente.
+A câmera nasce em `[90, -140, 80]`, com “cima” em Z, olhando para a origem. Arrastar com o botão esquerdo orbita; um clique seleciona o sólido. Shift, Ctrl ou Cmd no arrasto deixam o botão livre para a seleção e para os gizmos. O botão do meio desloca a vista e a roda aproxima. O botão direito abre o menu de contexto para acrescentar uma forma ou um componente.
+
+No canto inferior direito do viewport, um cartão explica a ferramenta ativa. Passar o cursor por um ícone ou item de menu troca o texto. O X fecha o cartão até a próxima função.
 
 ## Formas
 
 O menu **Formas** separa primitivas 3D e perfis 2D. O mesmo menu aparece no clique direito do viewport. Cada forma entra como nó raiz, 24 mm à direita da anterior, com uma cor da paleta.
 
-![Menu de formas 3D e 2D sobre a cena](images/03-menu-formas.png)
+![Menu de formas 3D e 2D sobre cubo, cilindro e esfera](images/03-menu-formas.png)
 
 | Forma | Medidas iniciais |
 | --- | --- |
@@ -69,13 +71,13 @@ O menu **Formas** separa primitivas 3D e perfis 2D. O mesmo menu aparece no cliq
 | Texto | “Texto”, 10 mm, fonte Liberation Sans, extrudado 4 mm. |
 | SVG | Arquivo escolhido no disco, extrudado 4 mm. Só no Electron. |
 
-![Cilindro e cubo, com tamanho, arestas e o OpenSCAD gerado](images/04-cubo-propriedades.png)
+![Cubo selecionado, com tamanho, arestas e o OpenSCAD gerado](images/04-cubo-propriedades.png)
 
-![Cilindro, cubo, esfera e polígono extrudado, com o gizmo de mover](images/05-tres-solidos.png)
+![Cubo, cilindro, esfera e um retângulo revolvido](images/05-tres-solidos.png)
 
 Um perfil 2D vira sólido por `linear_extrude`. A extrusão tem altura, torção e escala do topo. A escala 1 mantém o perfil; 0 fecha a peça num ponto.
 
-![Polígono extrudado, com lados, altura, torção e escala do topo](images/06-perfil-extrudado.png)
+![Retângulo extrudado, com tamanho, altura, torção e escala do topo](images/06-perfil-extrudado.png)
 
 No painel Modelo, o clique seleciona. Shift acrescenta ou tira o item da seleção. **Ver** / **Oculto** alterna `visible`. Um item oculto some da cena e do OpenSCAD gerado.
 
@@ -83,11 +85,7 @@ Dimensões positivas têm piso de 0,1 mm. O raio de aresta de um cubo ou retâng
 
 ## Mover, girar e escalar
 
-Com um item selecionado e destravado, **Mover**, **Girar** e **Escalar** mostram o gizmo local do Three.js.
-
-![Gizmo de escala no cubo, com cilindro, esfera e polígono na cena](images/07-gizmo-escala.png)
-
-Ao soltar o gizmo, a posição e a rotação (em graus, ordem XYZ) entram no documento. A escala não fica como fator solto na primitiva: ela é gravada nas dimensões.
+Com um item selecionado e destravado, **Mover**, **Girar** e **Escalar** mostram o gizmo local do Three.js. Ao soltar o gizmo, a posição e a rotação (em graus, ordem XYZ) entram no documento. A escala não fica como fator solto na primitiva: ela é gravada nas dimensões.
 
 - Cubo: cada eixo multiplica o tamanho correspondente.
 - Cilindro: a média de X e Y altera o diâmetro; Z altera a altura.
@@ -100,21 +98,40 @@ Os mesmos números podem ser digitados em Propriedades. Arrastar o controle de a
 
 **Travado** impede mudança de geometria e o gizmo. Visibilidade e a própria trava continuam editáveis.
 
-## Operações booleanas
+## Operações
 
-**União**, **Diferença** e **Interseção** exigem pelo menos dois itens selecionados. A operação falha se algum já pertence a outro booleano ou se um é ancestral do outro.
+Os menus **Operações 3D** e **Operações 2D** agrupam os sólidos selecionados. O novo nó fica na média das posições. Os filhos passam a ser relativos a esse centro e aparecem indentados no Modelo. A operação falha se algum item já pertence a outro grupo ou se um é ancestral do outro.
 
-O novo nó fica na média das posições dos selecionados. Os filhos passam a ser relativos a esse centro e deixam de aparecer como raízes. Na prévia rápida, o resultado é uma malha só; um filho selecionado ainda pode ser visto como fantasma.
+Clicar de novo na mesma operação, com o grupo selecionado, alterna **Ativa**. Desativada, os filhos continuam na árvore e o efeito some da cena e do OpenSCAD. O botão do menu fica destacado enquanto o grupo selecionado está ativo.
 
-A diferença segue a ordem da seleção: o primeiro item é a base e os seguintes são subtraídos. No OpenSCAD isso vira `difference()`, `union()` ou `intersection()`.
+![Menu de operações 3D: booleanos, casca, espelho, projeção, redimensionar e Minkowski](images/09-operacoes-3d.png)
 
-Apagar um booleano apaga a subárvore. Se um booleano ficar com menos de dois filhos, ele é desfeito: o filho restante volta ao pai, com a transformação composta.
+| Operação | O que exige | OpenSCAD |
+| --- | --- | --- |
+| União, diferença, interseção | Pelo menos dois sólidos. A diferença usa o primeiro da seleção como base. | `union()`, `difference()`, `intersection()`. Com raio, envolve em `round3d`. |
+| Casca 3D | Pelo menos dois sólidos. | `hull()` |
+| Espelhar | Um sólido. O eixo começa em X. | `mirror([1, 0, 0])` e equivalentes |
+| Projeção | Pelo menos um sólido. Vira perfil no plano XY e pode ser extrudado. `cut` começa falso. | `projection(cut=…)` |
+| Redimensionar | Um sólido, no tamanho atual da peça. `auto` começa falso. | `resize([x, y, z], auto=…)` |
+| Minkowski | Pelo menos dois sólidos. | `minkowski()` |
 
-Um booleano também tem arredondamento. Quando ele é maior que zero, o gerador envolve a operação em `round3d` do BOSL2.
+![Menu de operações 2D: offset, casca e revolução](images/08-operacoes-2d.png)
+
+Offset, casca 2D e revolução só aceitam perfil, offset, casca 2D ou projeção.
+
+| Operação | O que exige | OpenSCAD |
+| --- | --- | --- |
+| Offset | Pelo menos um perfil. Raio 1 mm no modo `radius`. | `offset(r=…)` ou `offset(delta=…, chamfer=…)` |
+| Casca 2D | Pelo menos dois perfis. | `hull()` no plano, depois a extrusão |
+| Revolução | Um perfil. Ângulo 360° e início 0. | `rotate_extrude(angle=…, start=…)` |
+
+![Retângulo revolvido em 360°, com ângulo, início e a opção Ativa](images/07-revolucao.png)
+
+Apagar um grupo apaga a subárvore. Se um grupo ficar com menos filhos do que o mínimo, ele é desfeito e o que resta volta ao pai, com a transformação composta.
 
 ## Componentes
 
-**Novo componente**, na árvore de arquivos, pede um nome e abre uma cena vazia. O nome precisa ser um identificador de OpenSCAD e não pode repetir um módulo já gerado pelo editor, como `cuboid` ou `union`.
+**Novo componente**, na árvore de arquivos, pede um nome e abre uma cena vazia. O arquivo `code/components/<Nome>.scad` é gravado na hora, sem usar **Salvar**. Se ainda não houver pasta, o aplicativo pede o local e cria o projeto antes. O nome precisa ser um identificador de OpenSCAD e não pode repetir um módulo já gerado pelo editor, como `cuboid` ou `union`.
 
 O componente vira `code/components/<Nome>.scad`, com um `module` de mesmo nome. O arquivo principal faz `use` desse caminho quando instancia o componente. O menu **Componentes** e o menu de contexto colocam uma instância na cena ativa. Uma instância que fecharia um ciclo é recusada.
 
@@ -137,7 +154,9 @@ O estado vive num store Zustand. O documento, versão 2, guarda um arquivo princ
 }
 ```
 
-Cada nó tem `id`, `name`, `visible`, `locked`, `consumedBy`, `transform` e `appearance`. `consumedBy` aponta para o booleano pai, ou `null` se o nó é raiz. Os tipos são `cuboid`, `cylinder`, `sphere`, `union`, `difference`, `intersection`, `rect`, `circle`, `ellipse`, `ngon`, `star`, `text`, `svg` e `component`.
+Cada nó tem `id`, `name`, `visible`, `locked`, `consumedBy`, `transform` e `appearance`. Grupos também têm `enabled`: ausente ou verdadeiro aplica o efeito; falso mantém os filhos e pula a operação. `consumedBy` aponta para o grupo pai, ou `null` se o nó é raiz.
+
+Os tipos são `cuboid`, `cylinder`, `sphere`, `union`, `difference`, `intersection`, `rect`, `circle`, `ellipse`, `ngon`, `star`, `text`, `svg`, `component`, `offset`, `hull2d`, `hull`, `mirror`, `revolve`, `projection`, `resize` e `minkowski`.
 
 SVGs ficam em `assets` do arquivo que os usa, com o fonte original. Na exportação, cada um vira `code/3dev-assets/<id>.svg`.
 
@@ -172,7 +191,17 @@ Se a cena usa componentes, entram linhas `use <...>`. Só as raízes visíveis s
 | Esfera | `spheroid(d=…, anchor=CENTER)` |
 | Retângulo, círculo, elipse, polígono, estrela, texto, SVG | perfil BOSL2 ou `import` dentro de `linear_extrude(height=…, center=true, twist=…, scale=…)` |
 | Booleano | `union()`, `difference()` ou `intersection()`, com `round3d` se houver raio |
+| Offset | `offset(r=…)` ou `offset(delta=…)` em volta do perfil, depois `linear_extrude` |
+| Casca 2D | `hull()` dos perfis, depois `linear_extrude` |
+| Casca 3D | `hull()` |
+| Espelhar | `mirror([1, 0, 0])`, `mirror([0, 1, 0])` ou `mirror([0, 0, 1])` |
+| Revolução | `rotate_extrude(angle=…, start=…)` |
+| Projeção | `projection(cut=true ou false)`, depois a extrusão do perfil |
+| Redimensionar | `resize([x, y, z], auto=…)` |
+| Minkowski | `minkowski()` |
 | Componente | `Nome();` |
+
+Um grupo desativado emite os filhos sem a chamada da operação. Se houver mais de um filho, eles entram num `union()`.
 
 Um componente exporta o módulo e ainda chama `Nome();` no fim do arquivo, para a prévia daquele arquivo sozinho.
 
@@ -209,6 +238,7 @@ Nome/
 | Ação | Resultado |
 | --- | --- |
 | Salvar | Sem projeto, pede a pasta e cria o JSON, `code/` e `output/`. Com projeto aberto, regrava o JSON, o `main.scad`, os componentes e os SVGs. |
+| Novo componente | Grava `code/components/<Nome>.scad` assim que o nome é confirmado. Sem projeto, cria a pasta antes. |
 | Abrir | Lê um `.3dev.json` e valida a versão 2. Se `code/` e `output/` estiverem ao lado, a árvore lista o projeto. O histórico é zerado. |
 | Exportar SCAD | Grava o fonte em `code/`. Sem projeto, salva antes. |
 | Exportar STL | Renderiza com OpenSCAD e grava `output/<nome>.stl`, substituindo o arquivo anterior. Sem projeto, salva antes. |

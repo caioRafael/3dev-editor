@@ -1,4 +1,5 @@
 import { generateProjectSources } from '../codegen/openscad'
+import { validateComponentName } from '../document/files'
 import { parseProjectDocument } from '../document/parse'
 import { useEditor } from '../document/store'
 import { createEmptyDocument, referencedSvgAssets } from '../document/tree'
@@ -58,21 +59,25 @@ export async function openRecentProjectFile(jsonPath: string): Promise<ActionRes
 }
 
 export async function saveCurrentProject(): Promise<ActionResult> {
-  const api = requireApi()
-  if (!api) return unavailable()
-  const { document, filePath, isProject } = useEditor.getState()
-  try {
-    const result = await api.saveProject({
-      filePath: isProject ? filePath : null,
-      documentName: document.name,
-      contents: JSON.stringify(document, null, 2),
-      files: generateProjectSources(document),
-      assets: referencedSvgAssets(document)
-    })
-    return applySaved(result, 'Modelo salvo.')
-  } catch {
-    return failed('Não foi possível gravar o projeto.')
+  const result = await persistOpenProject()
+  if (result.ok) useEditor.getState().setStatus('Modelo salvo.')
+  return result
+}
+
+export async function createNamedComponent(rawName: string): Promise<ActionResult> {
+  const name = rawName.trim()
+  const invalid = validateComponentName(useEditor.getState().document, name)
+  if (invalid) return { ok: false, message: invalid }
+  const { filePath, isProject } = useEditor.getState()
+  if (!filePath || !isProject) {
+    const ready = await persistOpenProject()
+    if (!ready.ok) return ready
   }
+  useEditor.getState().createComponent(name)
+  const written = await persistOpenProject()
+  if (!written.ok) return written
+  useEditor.getState().setStatus(`Componente ${name} criado`)
+  return { ok: true, message: '' }
 }
 
 export async function exportCurrentScad(): Promise<void> {
@@ -123,14 +128,27 @@ export async function exportCurrentStl(): Promise<void> {
 async function ensureProject(): Promise<ActionResult> {
   const { filePath, isProject } = useEditor.getState()
   if (filePath && isProject) return { ok: true, message: '' }
-  return saveCurrentProject()
+  return persistOpenProject()
 }
 
-function applySaved(result: FileResult, success: string): ActionResult {
-  if (!result.filePath) return { ok: false, message: result.message }
-  useEditor.getState().setProject(result.filePath, result.isProject)
-  useEditor.getState().setStatus(success)
-  return { ok: true, message: '' }
+async function persistOpenProject(): Promise<ActionResult> {
+  const api = requireApi()
+  if (!api) return unavailable()
+  const { document, filePath, isProject } = useEditor.getState()
+  try {
+    const result = await api.saveProject({
+      filePath: isProject ? filePath : null,
+      documentName: document.name,
+      contents: JSON.stringify(document, null, 2),
+      files: generateProjectSources(document),
+      assets: referencedSvgAssets(document)
+    })
+    if (!result.filePath) return { ok: false, message: result.message }
+    useEditor.getState().setProject(result.filePath, result.isProject)
+    return { ok: true, message: '' }
+  } catch {
+    return failed('Não foi possível gravar o projeto.')
+  }
 }
 
 function applyExport(result: FileResult, success: string): void {

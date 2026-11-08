@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { Edges, TransformControls } from '@react-three/drei'
 import type { ThreeEvent } from '@react-three/fiber'
 import { MathUtils, type Group } from 'three'
@@ -145,10 +145,20 @@ export function SelectionGizmo(): React.JSX.Element | null {
   const tool = useEditor((state) => state.tool)
   const selection = useEditor((state) => state.selection)
   const nodes = useEditor((state) => state.document.files[state.document.activeFile]?.nodes)
-  const { refs, version } = useViewportInteraction()
+  const { refs, version, controls } = useViewportInteraction()
   const selectedId = selection.at(-1) ?? null
   const node = selectedId && nodes ? nodes[selectedId] : undefined
   const object = selectedId ? refs.current.get(selectedId) : undefined
+  const gizmoActive =
+    Boolean(selectedId && node && object && !node.locked) &&
+    (tool === 'move' || tool === 'rotate' || tool === 'scale')
+  useEffect(() => {
+    if (!gizmoActive) return
+    return () => {
+      const orbit = controls.current
+      if (orbit) orbit.enabled = true
+    }
+  }, [controls, gizmoActive])
   if (!selectedId || !node || !object || node.locked) return null
   if (tool !== 'move' && tool !== 'rotate' && tool !== 'scale') return null
   const mode = tool === 'move' ? 'translate' : tool === 'rotate' ? 'rotate' : 'scale'
@@ -161,6 +171,8 @@ export function SelectionGizmo(): React.JSX.Element | null {
       space="local"
       onMouseDown={() => {
         dragIdRef.current = selectedId
+        const orbit = controls.current
+        if (orbit) orbit.enabled = false
       }}
       onMouseUp={() => {
         const position = {
@@ -176,10 +188,15 @@ export function SelectionGizmo(): React.JSX.Element | null {
         const scale =
           tool === 'scale' ? { x: object.scale.x, y: object.scale.y, z: object.scale.z } : null
         object.scale.set(1, 1, 1)
-        useEditor.getState().commitTransform(selectedId, { position, rotation }, scale)
-        window.setTimeout(() => {
-          dragIdRef.current = null
-        }, 0)
+        const orbit = controls.current
+        try {
+          useEditor.getState().commitTransform(selectedId, { position, rotation }, scale)
+        } finally {
+          if (orbit) orbit.enabled = true
+          window.setTimeout(() => {
+            dragIdRef.current = null
+          }, 0)
+        }
       }}
     />
   )
@@ -208,7 +225,7 @@ function PrimitiveMesh({
       castShadow
       geometry={rounded ?? undefined}
       rotation={isCylinderNode(node) ? [Math.PI / 2, 0, 0] : [0, 0, 0]}
-      onPointerDown={(event) => selectFromEvent(event, selectId)}
+      onClick={(event) => selectFromEvent(event, selectId)}
       {...(interactive ? {} : { raycast: skipRaycast })}
     >
       {isCuboidNode(node) && !rounded ? (
@@ -260,7 +277,7 @@ function ProfileMesh({
     <mesh
       geometry={geometry}
       castShadow
-      onPointerDown={(event) => selectFromEvent(event, selectId)}
+      onClick={(event) => selectFromEvent(event, selectId)}
       {...(interactive ? {} : { raycast: skipRaycast })}
     >
       <meshStandardMaterial
@@ -298,7 +315,7 @@ function BooleanMesh({
     <mesh
       geometry={geometry}
       castShadow
-      onPointerDown={(event) => selectFromEvent(event, selectId)}
+      onClick={(event) => selectFromEvent(event, selectId)}
       {...(interactive ? {} : { raycast: skipRaycast })}
     >
       <meshStandardMaterial
@@ -315,8 +332,11 @@ function BooleanMesh({
   )
 }
 
-function selectFromEvent(event: ThreeEvent<PointerEvent>, id: string): void {
+const CLICK_DELTA = 2
+
+function selectFromEvent(event: ThreeEvent<MouseEvent>, id: string): void {
   event.stopPropagation()
+  if (event.button !== 0 || event.delta > CLICK_DELTA || dragIdRef.current) return
   useEditor.getState().select(id, { additive: event.shiftKey })
 }
 

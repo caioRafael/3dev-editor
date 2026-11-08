@@ -1,20 +1,30 @@
 import { useId, useState } from 'react'
 import { validateComponentName } from '../document/files'
 import { useEditor } from '../document/store'
+import { createNamedComponent } from './projectActions'
 
 export function ComponentNameModal({ onClose }: { onClose: () => void }): React.JSX.Element {
   const titleId = useId()
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [pending, setPending] = useState(false)
 
   function submit(): void {
+    if (pending) return
     const message = validateComponentName(useEditor.getState().document, name)
     if (message) {
       setError(message)
       return
     }
-    useEditor.getState().createComponent(name)
-    onClose()
+    setPending(true)
+    void createNamedComponent(name).then((result) => {
+      if (!result.ok) {
+        if (result.message) setError(result.message)
+        setPending(false)
+        return
+      }
+      onClose()
+    })
   }
 
   return (
@@ -59,7 +69,8 @@ export function ComponentNameModal({ onClose }: { onClose: () => void }): React.
           </button>
           <button
             type="submit"
-            className="rounded-md bg-[#d97757] px-3 py-1.5 text-[12px] text-[#1c120e]"
+            disabled={pending}
+            className="rounded-md bg-[#d97757] px-3 py-1.5 text-[12px] text-[#1c120e] disabled:opacity-60"
           >
             Criar
           </button>

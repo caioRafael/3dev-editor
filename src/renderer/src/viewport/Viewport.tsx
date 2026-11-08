@@ -39,7 +39,7 @@ export function Viewport(): React.JSX.Element {
     setVersion((current) => current + 1)
   }, [])
   const interaction = useMemo<ViewportInteraction>(
-    () => ({ refs, version, register }),
+    () => ({ refs, controls: controlsRef, version, register }),
     [register, version]
   )
 
@@ -48,12 +48,12 @@ export function Viewport(): React.JSX.Element {
       className="absolute inset-0"
       onPointerDownCapture={(event) => {
         const controls = controlsRef.current
-        if (!controls || event.button !== 2) return
-        controls.mouseButtons.RIGHT = event.altKey ? MOUSE.ROTATE : (-1 as MOUSE)
+        if (!controls || event.button !== 0) return
+        const modified = event.shiftKey || event.ctrlKey || event.metaKey
+        controls.mouseButtons.LEFT = modified ? (-1 as MOUSE) : MOUSE.ROTATE
       }}
       onContextMenu={(event) => {
         event.preventDefault()
-        if (event.altKey) return
         setMenu({ x: event.clientX, y: event.clientY })
       }}
     >
@@ -99,7 +99,7 @@ export function Viewport(): React.JSX.Element {
             enableDamping
             dampingFactor={0.12}
             mouseButtons={{
-              LEFT: -1 as MOUSE,
+              LEFT: MOUSE.ROTATE,
               MIDDLE: MOUSE.PAN,
               RIGHT: -1 as MOUSE
             }}

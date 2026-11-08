@@ -47,8 +47,8 @@ export function registerIpc(): void {
         return { filePath: request.filePath, message: '', isProject: true }
       }
       const picked = await dialog.showSaveDialog({
-        title: 'Salvar projeto',
-        buttonLabel: 'Salvar',
+        title: 'Criar projeto',
+        buttonLabel: 'Criar',
         defaultPath: `${projectStem(request.documentName)}.3dev`
       })
       if (picked.canceled || !picked.filePath) return failed('')

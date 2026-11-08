@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ChevronRight, File, FileCode, FileJson, Folder, FolderOpen } from 'lucide-react'
 import { componentNames, MAIN_FILE } from '../document/files'
 import { useEditor } from '../document/store'
 import type { ProjectEntry, ProjectTree } from '../../../shared/api'
@@ -13,6 +14,7 @@ export function FileTree(): React.JSX.Element {
   const [loaded, setLoaded] = useState<{ path: string; tree: ProjectTree | null } | null>(null)
   const [selection, setSelection] = useState<{ path: string; key: string } | null>(null)
   const [naming, setNaming] = useState(false)
+  const [closed, setClosed] = useState<ReadonlySet<string>>(new Set())
   const tree = loaded?.path === filePath ? loaded.tree : null
   const selectionPath = filePath ?? ''
   const selected = selection?.path === selectionPath ? selection.key : null
@@ -33,6 +35,20 @@ export function FileTree(): React.JSX.Element {
 
   function choose(key: string): void {
     setSelection({ path: selectionPath, key })
+  }
+
+  function toggle(key: string): void {
+    setClosed((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  function openFolder(key: string): void {
+    choose(key)
+    toggle(key)
   }
 
   function openCodeFile(fileName: string): void {
@@ -57,69 +73,91 @@ export function FileTree(): React.JSX.Element {
         </button>
       </header>
       <div className="min-h-0 flex-1 overflow-auto p-2">
-        <p className="truncate px-2 py-1 text-[12px] font-medium text-[#e7e9ee]">{rootName}</p>
-        {jsonName ? (
-          <TreeButton
-            label={jsonName}
-            depth={1}
-            selected={selected === jsonName}
-            onClick={() => choose(jsonName)}
-          />
-        ) : null}
         <TreeButton
-          label="code"
-          depth={1}
-          selected={selected === 'code'}
-          onClick={() => choose('code')}
+          label={rootName}
+          depth={0}
+          kind="directory"
+          open={!closed.has('root')}
+          selected={selected === 'root'}
+          onClick={() => openFolder('root')}
         />
-        <TreeButton
-          label="main.scad"
-          depth={2}
-          selected={document.activeFile === MAIN_FILE}
-          onClick={() => openCodeFile(MAIN_FILE)}
-        />
-        <TreeButton
-          label="components"
-          depth={2}
-          selected={selected === 'code/components'}
-          onClick={() => choose('code/components')}
-        />
-        {components.map((name) => (
-          <TreeButton
-            key={name}
-            label={`${name}.scad`}
-            depth={3}
-            selected={document.activeFile === name}
-            onClick={() => openCodeFile(name)}
-          />
-        ))}
-        <EntryList
-          entries={(tree?.code ?? []).filter(
-            (entry) => entry.name !== 'main.scad' && entry.name !== 'components'
-          )}
-          prefix="code"
-          depth={2}
-          selected={selected}
-          onSelect={choose}
-        />
-        <TreeButton
-          label="output"
-          depth={1}
-          selected={selected === 'output'}
-          onClick={() => choose('output')}
-        />
-        {tree?.isProject && tree.output.length === 0 ? (
-          <p className="px-2 py-1 text-[12px] text-[#8b93a3]" style={{ paddingLeft: 8 + 2 * 12 }}>
-            Nenhuma saída
-          </p>
-        ) : (
-          <EntryList
-            entries={tree?.output ?? []}
-            prefix="output"
-            depth={2}
-            selected={selected}
-            onSelect={choose}
-          />
+        {closed.has('root') ? null : (
+          <>
+            {jsonName ? (
+              <TreeButton
+                label={jsonName}
+                depth={1}
+                kind="file"
+                selected={selected === jsonName}
+                onClick={() => choose(jsonName)}
+              />
+            ) : null}
+            <TreeButton
+              label="code"
+              depth={1}
+              kind="directory"
+              open={!closed.has('code')}
+              selected={selected === 'code'}
+              onClick={() => openFolder('code')}
+            />
+            {closed.has('code') ? null : (
+              <>
+                <TreeButton
+                  label="main.scad"
+                  depth={2}
+                  kind="file"
+                  selected={document.activeFile === MAIN_FILE}
+                  onClick={() => openCodeFile(MAIN_FILE)}
+                />
+                <TreeButton
+                  label="components"
+                  depth={2}
+                  kind="directory"
+                  open={!closed.has('code/components')}
+                  selected={selected === 'code/components'}
+                  onClick={() => openFolder('code/components')}
+                />
+                {closed.has('code/components')
+                  ? null
+                  : components.map((name) => (
+                      <TreeButton
+                        key={name}
+                        label={`${name}.scad`}
+                        depth={3}
+                        kind="file"
+                        selected={document.activeFile === name}
+                        onClick={() => openCodeFile(name)}
+                      />
+                    ))}
+                <EntryList
+                  entries={(tree?.code ?? []).filter(
+                    (entry) => entry.name !== 'main.scad' && entry.name !== 'components'
+                  )}
+                  prefix="code"
+                  depth={2}
+                  selected={selected}
+                  closed={closed}
+                  onSelect={choose}
+                  onToggle={openFolder}
+                />
+              </>
+            )}
+            <TreeButton
+              label="output"
+              depth={1}
+              kind="directory"
+              open={!closed.has('output')}
+              selected={selected === 'output'}
+              onClick={() => openFolder('output')}
+            />
+            <OutputEntries
+              tree={tree}
+              closed={closed}
+              selected={selected}
+              onSelect={choose}
+              onToggle={openFolder}
+            />
+          </>
         )}
         {message ? <p className="px-2 py-2 text-[12px] text-[#8b93a3]">{message}</p> : null}
       </div>
@@ -128,38 +166,82 @@ export function FileTree(): React.JSX.Element {
   )
 }
 
+function OutputEntries({
+  tree,
+  closed,
+  selected,
+  onSelect,
+  onToggle
+}: {
+  tree: ProjectTree | null
+  closed: ReadonlySet<string>
+  selected: string | null
+  onSelect: (key: string) => void
+  onToggle: (key: string) => void
+}): React.JSX.Element | null {
+  if (closed.has('output')) return null
+  if (tree?.isProject && tree.output.length === 0) {
+    return (
+      <p className="px-2 py-1 text-[12px] text-[#8b93a3]" style={{ paddingLeft: 8 + 2 * 12 + 18 }}>
+        Nenhuma saída
+      </p>
+    )
+  }
+  return (
+    <EntryList
+      entries={tree?.output ?? []}
+      prefix="output"
+      depth={2}
+      selected={selected}
+      closed={closed}
+      onSelect={onSelect}
+      onToggle={onToggle}
+    />
+  )
+}
+
 function EntryList({
   entries,
   prefix,
   depth,
   selected,
-  onSelect
+  closed,
+  onSelect,
+  onToggle
 }: {
   entries: ProjectEntry[]
   prefix: string
   depth: number
   selected: string | null
+  closed: ReadonlySet<string>
   onSelect: (key: string) => void
+  onToggle: (key: string) => void
 }): React.JSX.Element {
   return (
     <>
       {entries.map((entry) => {
         const key = `${prefix}/${entry.name}`
+        const directory = entry.kind === 'directory'
+        const open = directory && !closed.has(key)
         return (
           <div key={key}>
             <TreeButton
               label={entry.name}
               depth={depth}
+              kind={entry.kind}
+              open={open}
               selected={selected === key}
-              onClick={() => onSelect(key)}
+              onClick={() => (directory ? onToggle(key) : onSelect(key))}
             />
-            {entry.kind === 'directory' && entry.children.length > 0 ? (
+            {open && entry.children.length > 0 ? (
               <EntryList
                 entries={entry.children}
                 prefix={key}
                 depth={depth + 1}
                 selected={selected}
+                closed={closed}
                 onSelect={onSelect}
+                onToggle={onToggle}
               />
             ) : null}
           </div>
@@ -172,25 +254,58 @@ function EntryList({
 function TreeButton({
   label,
   depth,
+  kind,
+  open = false,
   selected,
   onClick
 }: {
   label: string
   depth: number
+  kind: 'file' | 'directory'
+  open?: boolean
   selected: boolean
   onClick: () => void
 }): React.JSX.Element {
   return (
     <button
       type="button"
-      className={`block w-full truncate rounded-md py-1 pr-2 text-left text-[12px] ${selected ? 'bg-[#343c4e]' : 'hover:bg-[#262b38]'}`}
+      className={`flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-[12px] text-[#d5d8e0] ${selected ? 'bg-[#343c4e]' : 'hover:bg-[#262b38]'}`}
       style={{ paddingLeft: 8 + depth * 12 }}
       aria-pressed={selected}
+      aria-expanded={kind === 'directory' ? open : undefined}
       onClick={onClick}
     >
-      {label}
+      {kind === 'directory' ? (
+        <ChevronRight size={12} className={`shrink-0 text-[#8b93a3] ${open ? 'rotate-90' : ''}`} />
+      ) : (
+        <span className="w-3 shrink-0" />
+      )}
+      <TreeGlyph kind={kind} open={open} label={label} />
+      <span className="truncate">{label}</span>
     </button>
   )
+}
+
+function TreeGlyph({
+  kind,
+  open,
+  label
+}: {
+  kind: 'file' | 'directory'
+  open: boolean
+  label: string
+}): React.JSX.Element {
+  const className = 'shrink-0 text-[#8b93a3]'
+  if (kind === 'directory') {
+    return open ? (
+      <FolderOpen size={14} className={className} />
+    ) : (
+      <Folder size={14} className={className} />
+    )
+  }
+  if (label.endsWith('.json')) return <FileJson size={14} className={className} />
+  if (label.endsWith('.scad')) return <FileCode size={14} className={className} />
+  return <File size={14} className={className} />
 }
 
 function treePhase(
@@ -203,7 +318,7 @@ function treePhase(
 }
 
 function hint(phase: 'empty' | 'loading' | 'ready' | 'missing', isProject: boolean): string {
-  if (phase === 'empty') return 'Salve para criar a pasta do projeto.'
+  if (phase === 'empty') return 'Crie um projeto para gravar a pasta.'
   if (phase === 'missing') return 'Não foi possível ler a pasta do projeto.'
   if (phase === 'ready' && !isProject) return 'Este arquivo ainda não é uma pasta de projeto.'
   return ''

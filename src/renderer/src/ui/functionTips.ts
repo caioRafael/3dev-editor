@@ -21,7 +21,7 @@ const TOOL_TIPS: Record<EditorTool, FunctionTip> = {
   select: {
     id: 'tool:select',
     title: 'Selecionar',
-    body: 'Clique em um sólido para selecioná-lo. Shift adiciona ou tira itens da seleção.'
+    body: 'Clique em um sólido para selecioná-lo. Arrastar com o esquerdo orbita a câmera. Shift adiciona ou tira itens da seleção.'
   },
   move: {
     id: 'tool:move',

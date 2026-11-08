@@ -4,7 +4,7 @@ Editor 3D paramétrico para desktop. A modelagem acontece numa vista isométrica
 
 Um projeto é uma pasta, com o documento, o `main.scad`, componentes e o STL. Feito com Electron, React, TypeScript, Three.js e Monaco. O gerenciador de pacotes do projeto é o `pnpm`.
 
-![Cilindro, cubo, esfera e polígono extrudado, com o gizmo de mover](docs/images/05-tres-solidos.png)
+![Cubo, cilindro, esfera e um retângulo revolvido, na câmera isométrica](docs/images/05-tres-solidos.png)
 
 ## Executar
 
@@ -25,11 +25,14 @@ pnpm build:linux
 
 - **Projeto:** modal para criar, abrir ou retomar um recente. A coluna esquerda mostra o modelo e a pasta (`code`, `components`, `output`).
 - **Formas:** cubo, cilindro, esfera, retângulo, círculo, elipse, polígono, estrela, texto e SVG. Perfis 2D são extrudados.
-- **Ferramentas:** selecionar, mover, girar, escalar e aplicar união, diferença ou interseção.
+- **Ferramentas:** selecionar, mover, girar e escalar. Arrastar com o botão esquerdo orbita a câmera; um clique seleciona o sólido.
+- **Operações 3D:** união, diferença, interseção, casca 3D, espelhar, projeção, redimensionar e Minkowski.
+- **Operações 2D:** offset, casca convexa e revolução de um perfil. Clicar de novo na mesma operação ativa ou desativa o grupo.
+- **Dica da função:** um cartão no canto do viewport explica a ferramenta ou o item sob o cursor.
 - **Componentes:** cada um é um módulo OpenSCAD e pode ser instanciado na cena.
 - **OpenSCAD:** fonte gerado em tempo real, com edição de volta para o modelo.
-- **Propriedades:** posição, rotação, dimensões, extrusão, cor, opacidade e trava.
+- **Propriedades:** posição, rotação, dimensões, extrusão, parâmetros da operação, cor, opacidade, atividade e trava.
 
 O guia completo, com a câmera, o formato do documento, as duas prévias e o mapa do código, está em [docs/como-funciona.md](docs/como-funciona.md).
 
-![Menu de formas 3D e 2D sobre a cena atual](docs/images/03-menu-formas.png)
+![Menu de operações 3D sobre cubo, cilindro, esfera e a revolução](docs/images/09-operacoes-3d.png)

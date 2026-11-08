@@ -1,8 +1,10 @@
 import { createContext, useContext, type MutableRefObject } from 'react'
 import type { Group } from 'three'
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 
 export interface ViewportInteraction {
   refs: MutableRefObject<Map<string, Group>>
+  controls: MutableRefObject<OrbitControlsImpl | null>
   version: number
   register: (id: string, group: Group | null) => void
 }
