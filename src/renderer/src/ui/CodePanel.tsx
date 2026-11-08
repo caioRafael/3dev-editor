@@ -3,7 +3,9 @@ import type { editor as MonacoEditor } from 'monaco-editor/editor/editor.api.js'
 import { generateOpenscad } from '../codegen/openscad'
 import { parseOpenscad } from '../codegen/parseOpenscad'
 import { useEditor } from '../document/store'
+import { registerEditorHistory } from '../editor/editorHistory'
 import { createOpenscadEditor, setOpenscadMarkers } from '../editor/openscadEditor'
+import { PanelHeader } from './PanelHeader'
 
 const APPLY_DELAY = 320
 
@@ -72,6 +74,10 @@ export function CodePanel({ source }: { source: string }): React.JSX.Element {
       }
       schedule()
     })
+    const unregisterHistory = registerEditorHistory({
+      undo: () => editor.trigger('menu', 'undo', null),
+      redo: () => editor.trigger('menu', 'redo', null)
+    })
     const blur = editor.onDidBlurEditorText(() => {
       if (!pendingRef.current || syncingRef.current) return
       window.clearTimeout(timerRef.current)
@@ -79,6 +85,7 @@ export function CodePanel({ source }: { source: string }): React.JSX.Element {
     })
 
     return () => {
+      unregisterHistory()
       window.clearTimeout(timerRef.current)
       content.dispose()
       blur.dispose()
@@ -112,20 +119,19 @@ export function CodePanel({ source }: { source: string }): React.JSX.Element {
         className="h-1 shrink-0 cursor-row-resize bg-[#2c3240] hover:bg-[#d97757]"
         onPointerDown={(event) => startResize(event, height, setHeight)}
       />
-      <header className="flex shrink-0 items-center gap-2 px-3 py-1.5 text-[12px] text-[#9aa3b2]">
-        <span>OpenSCAD</span>
+      <PanelHeader title="OpenSCAD">
         {error ? (
-          <span className="min-w-0 flex-1 truncate text-[#e07a6a]" title={error}>
+          <span className="min-w-0 flex-1 truncate font-normal text-[#e07a6a]" title={error}>
             {error}
           </span>
         ) : (
-          <span className="min-w-0 flex-1 truncate text-[#6a7384]">
+          <span className="min-w-0 flex-1 truncate font-normal text-[#6a7384]">
             cuboid, cyl, spheroid, perfis extrudados, booleanos e transforms
           </span>
         )}
         <button
           type="button"
-          className="rounded-md px-2 py-1 text-[#f2f4f8] hover:bg-[#2a3040]"
+          className="shrink-0 rounded-md px-2 py-0.5 font-normal text-[#f2f4f8] hover:bg-[#2a3040]"
           onClick={() => {
             const value = editorRef.current?.getValue() ?? source
             void navigator.clipboard.writeText(value)
@@ -133,7 +139,7 @@ export function CodePanel({ source }: { source: string }): React.JSX.Element {
         >
           Copiar
         </button>
-      </header>
+      </PanelHeader>
       <div ref={containerRef} className="min-h-0 w-full flex-1" />
     </section>
   )

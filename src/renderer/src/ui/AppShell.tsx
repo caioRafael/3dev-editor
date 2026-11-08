@@ -1,20 +1,74 @@
 import { useEffect, useMemo, useState } from 'react'
+import { formatWindowTitle } from '../../../shared/windowTitle'
 import { generateOpenscad } from '../codegen/openscad'
 import { useEditor } from '../document/store'
+import { applyLocalHistory } from '../editor/editorHistory'
 import { CodePanel } from './CodePanel'
 import { FileTree } from './FileTree'
 import { Inspector } from './Inspector'
-import { MenuBar } from './MenuBar'
 import { Outliner } from './Outliner'
 import { StatusBar } from './StatusBar'
 import { Toolbar } from './Toolbar'
 import { WelcomeModal } from './WelcomeModal'
 import { Viewport } from '../viewport/Viewport'
+import { readEditorApi } from './editorApi'
+import {
+  exportCurrentModel,
+  exportCurrentScad,
+  openProjectFile,
+  openRecentProjectFile,
+  saveCurrentProject
+} from './projectActions'
 
 export function AppShell(): React.JSX.Element {
   const document = useEditor((state) => state.document)
+  const filePath = useEditor((state) => state.filePath)
+  const isProject = useEditor((state) => state.isProject)
   const source = useMemo(() => generateOpenscad(document), [document])
   const [welcomeOpen, setWelcomeOpen] = useState(true)
+
+  useEffect(() => {
+    readEditorApi()?.setWindowTitle(formatWindowTitle(filePath, isProject))
+  }, [filePath, isProject])
+
+  useEffect(() => {
+    const api = readEditorApi()
+    if (!api) return
+    return api.onMenuCommand((command) => {
+      if (command.kind === 'new') {
+        setWelcomeOpen(true)
+        return
+      }
+      if (command.kind === 'open') {
+        void openProjectFile()
+        return
+      }
+      if (command.kind === 'save') {
+        void saveCurrentProject()
+        return
+      }
+      if (command.kind === 'export-scad') {
+        void exportCurrentScad()
+        return
+      }
+      if (command.kind === 'export-model') {
+        void exportCurrentModel(command.format)
+        return
+      }
+      if (command.kind === 'open-recent') {
+        void openRecentProjectFile(command.jsonPath)
+        return
+      }
+      if (command.kind === 'render') {
+        useEditor.getState().requestExactPreview()
+        return
+      }
+      if (welcomeOpen) return
+      if (applyLocalHistory(command.kind)) return
+      if (command.kind === 'undo') useEditor.getState().undo()
+      else useEditor.getState().redo()
+    })
+  }, [welcomeOpen])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -32,11 +86,7 @@ export function AppShell(): React.JSX.Element {
       ) {
         return
       }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
-        event.preventDefault()
-        if (event.shiftKey) useEditor.getState().redo()
-        else useEditor.getState().undo()
-      } else if (event.key === 'Delete' || event.key === 'Backspace') {
+      if (event.key === 'Delete' || event.key === 'Backspace') {
         useEditor.getState().removeSelected()
       } else if (event.key === 'Escape') {
         useEditor.getState().select(null)
@@ -48,7 +98,6 @@ export function AppShell(): React.JSX.Element {
 
   return (
     <div className="flex h-full w-full flex-col bg-[#14161b] text-[#e7e9ee]">
-      <MenuBar onNew={() => setWelcomeOpen(true)} />
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-64 shrink-0 flex-col border-r border-[#2c3240] bg-[#1b1e27]">
           <Outliner />

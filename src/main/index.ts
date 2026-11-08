@@ -1,8 +1,17 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { registerIpc } from './ipc'
+import { installAppMenu } from './menu'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import icon from '../../resources/icon.png?asset'
+import iconLinux from '../../resources/icon-linux.png?asset'
+import iconMac from '../../resources/icon-mac.png?asset'
+import iconWin from '../../resources/icon-win.png?asset'
+
+function windowIcon(): string {
+  if (process.platform === 'win32') return iconWin
+  if (process.platform === 'linux') return iconLinux
+  return iconMac
+}
 
 function createWindow(): void {
   // Create the browser window.
@@ -12,10 +21,10 @@ function createWindow(): void {
     minWidth: 960,
     minHeight: 640,
     show: false,
-    autoHideMenuBar: true,
+    autoHideMenuBar: false,
     backgroundColor: '#14161b',
     title: '3dev editor',
-    ...(process.platform === 'linux' ? { icon } : {}),
+    icon: windowIcon(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -57,6 +66,8 @@ app.whenReady().then(() => {
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
   registerIpc()
+  installAppMenu()
+  if (process.platform === 'darwin') app.dock?.setIcon(iconMac)
 
   createWindow()
 

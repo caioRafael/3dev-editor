@@ -4,6 +4,14 @@ import { join } from 'node:path'
 import type { RecentProject } from '../shared/api'
 import { parseRecentProjects, projectFolderName, rememberRecent } from '../shared/project'
 
+type RecentsListener = () => void
+
+let recentsListener: RecentsListener | null = null
+
+export function watchRecents(listener: RecentsListener): void {
+  recentsListener = listener
+}
+
 function recentsPath(): string {
   return join(app.getPath('userData'), 'recent-projects.json')
 }
@@ -32,6 +40,7 @@ export async function rememberProject(jsonPath: string): Promise<void> {
   await writeRecentProjects(
     rememberRecent(current, { name: projectFolderName(jsonPath), jsonPath })
   )
+  recentsListener?.()
 }
 
 async function writeRecentProjects(projects: RecentProject[]): Promise<void> {

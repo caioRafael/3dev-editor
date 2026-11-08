@@ -13,6 +13,8 @@ function isEditorApi(value: unknown): value is EditorApi {
     'saveProject' in value &&
     'openscadDetect' in value &&
     'listProjectTree' in value &&
-    'listRecentProjects' in value
+    'listRecentProjects' in value &&
+    'onMenuCommand' in value &&
+    'setWindowTitle' in value
   )
 }

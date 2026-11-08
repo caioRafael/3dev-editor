@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import { IpcChannel, type EditorApi } from '../shared/api'
+import { IpcChannel, isMenuCommand, type EditorApi } from '../shared/api'
 
 const api: EditorApi = {
   openscadDetect: () => ipcRenderer.invoke(IpcChannel.openscadDetect),
@@ -15,7 +15,19 @@ const api: EditorApi = {
   pickSvg: () => ipcRenderer.invoke(IpcChannel.pickSvg),
   listProjectTree: (jsonPath) => ipcRenderer.invoke(IpcChannel.listProjectTree, jsonPath),
   listRecentProjects: () => ipcRenderer.invoke(IpcChannel.listRecentProjects),
-  openRecentProject: (jsonPath) => ipcRenderer.invoke(IpcChannel.openRecentProject, jsonPath)
+  openRecentProject: (jsonPath) => ipcRenderer.invoke(IpcChannel.openRecentProject, jsonPath),
+  onMenuCommand: (listener) => {
+    const wrapped = (_event: unknown, command: unknown): void => {
+      if (isMenuCommand(command)) listener(command)
+    }
+    ipcRenderer.on(IpcChannel.menuCommand, wrapped)
+    return () => {
+      ipcRenderer.removeListener(IpcChannel.menuCommand, wrapped)
+    }
+  },
+  setWindowTitle: (title) => {
+    ipcRenderer.send(IpcChannel.setWindowTitle, title)
+  }
 }
 
 if (process.contextIsolated) {

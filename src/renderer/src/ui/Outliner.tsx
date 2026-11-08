@@ -2,15 +2,14 @@ import { activeModel } from '../document/files'
 import { useEditor } from '../document/store'
 import { getRoots } from '../document/tree'
 import { isGroupEnabled, isGroupNode } from '../document/types'
+import { PanelHeader } from './PanelHeader'
 
 export function Outliner(): React.JSX.Element {
   const document = useEditor((state) => state.document)
   const roots = getRoots(document)
   return (
     <section className="flex min-h-0 flex-1 flex-col">
-      <header className="border-b border-[#2c3240] px-3 py-2 text-[12px] tracking-wide text-[#9aa3b2] uppercase">
-        Modelo
-      </header>
+      <PanelHeader title="Modelo" />
       <div className="min-h-0 flex-1 overflow-auto p-2">
         {roots.length === 0 ? (
           <p className="px-2 py-3 text-[12px] text-[#8b93a3]">

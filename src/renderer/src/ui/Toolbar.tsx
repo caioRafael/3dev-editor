@@ -33,6 +33,7 @@ import {
 } from '../document/types'
 import { componentNames } from '../document/files'
 import { useEditor } from '../document/store'
+import appIcon from '../assets/app-icon.png'
 import {
   componentTip,
   tipForBoolean,
@@ -93,7 +94,13 @@ export function Toolbar(): React.JSX.Element {
   const flatActive = FLAT_OPERATIONS.some((item) => item.kind === activeGroup)
 
   return (
-    <div className="relative z-30 flex h-11 shrink-0 items-center gap-1 overflow-x-auto border-b border-[#2c3240] bg-[#1b1e27] px-2">
+    <div className="relative z-30 flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-[#2c3240] bg-[#1b1e27] px-2">
+      <img
+        src={appIcon}
+        alt="3dev"
+        className="mx-1 h-[22px] w-[22px] shrink-0 rounded-md ring-1 ring-[#2c3240]"
+      />
+      <Divider />
       {MODES.map((item) => (
         <IconButton
           key={item.tool}

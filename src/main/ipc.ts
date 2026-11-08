@@ -1,4 +1,4 @@
-import { dialog, ipcMain } from 'electron'
+import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import {
@@ -8,6 +8,7 @@ import {
   isSaveProjectRequest,
   isScadAssetList,
   isScadFileList,
+  isWindowTitle,
   type FileResult,
   type MeshFormat,
   type OpenProjectResult,
@@ -26,6 +27,11 @@ import {
 import { readRecentProjects, rememberProject } from './recents'
 
 export function registerIpc(): void {
+  ipcMain.on(IpcChannel.setWindowTitle, (event, title: unknown) => {
+    if (!isWindowTitle(title)) return
+    BrowserWindow.fromWebContents(event.sender)?.setTitle(title)
+  })
+
   ipcMain.handle(IpcChannel.openscadDetect, () => detectOpenscad())
 
   ipcMain.handle(

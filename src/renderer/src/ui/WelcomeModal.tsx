@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { RecentProject } from '../../../shared/api'
+import appIcon from '../assets/app-icon.png'
 import { readEditorApi } from './editorApi'
 import { createProject, openProjectFile, openRecentProjectFile } from './projectActions'
 
@@ -61,11 +62,18 @@ export function WelcomeModal({
         aria-modal="true"
         aria-labelledby="welcome-title"
       >
-        <div>
-          <h1 id="welcome-title" className="text-[18px] font-semibold text-[#f3f5f8]">
-            3dev
-          </h1>
-          <p className="mt-1 text-[13px] text-[#9aa3b2]">Crie um projeto ou abra um existente.</p>
+        <div className="flex items-center gap-3">
+          <img
+            src={appIcon}
+            alt=""
+            className="h-10 w-10 shrink-0 rounded-lg ring-1 ring-[#2c3240]"
+          />
+          <div>
+            <h1 id="welcome-title" className="text-[18px] font-semibold text-[#f3f5f8]">
+              3dev
+            </h1>
+            <p className="mt-1 text-[13px] text-[#9aa3b2]">Crie um projeto ou abra um existente.</p>
+          </div>
         </div>
         <div className="flex gap-2">
           <ModalButton

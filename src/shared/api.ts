@@ -8,7 +8,9 @@ export const IpcChannel = {
   pickSvg: 'asset:pick-svg',
   listProjectTree: 'project:tree',
   listRecentProjects: 'project:recent',
-  openRecentProject: 'project:open-recent'
+  openRecentProject: 'project:open-recent',
+  menuCommand: 'menu:command',
+  setWindowTitle: 'window:set-title'
 } as const
 
 const ASSET_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -81,6 +83,11 @@ export interface RecentProject {
   jsonPath: string
 }
 
+export type MenuCommand =
+  | { kind: 'new' | 'open' | 'save' | 'export-scad' | 'render' | 'undo' | 'redo' }
+  | { kind: 'export-model'; format: MeshFormat }
+  | { kind: 'open-recent'; jsonPath: string }
+
 export interface EditorApi {
   openscadDetect: () => Promise<OpenscadStatus>
   previewStl: (entry: string, files: ScadFile[], assets: ScadAsset[]) => Promise<PreviewStlResult>
@@ -97,6 +104,8 @@ export interface EditorApi {
   listProjectTree: (jsonPath: string) => Promise<ProjectTree | null>
   listRecentProjects: () => Promise<RecentProject[]>
   openRecentProject: (jsonPath: string) => Promise<OpenProjectResult | null>
+  onMenuCommand: (listener: (command: MenuCommand) => void) => () => void
+  setWindowTitle: (title: string) => void
 }
 
 export function isScadAssetList(value: unknown): value is ScadAsset[] {
@@ -109,6 +118,30 @@ export function isScadFileList(value: unknown): value is ScadFile[] {
 
 export function isMeshFormat(value: unknown): value is MeshFormat {
   return value === 'stl' || value === 'obj' || value === '3mf'
+}
+
+export function isMenuCommand(value: unknown): value is MenuCommand {
+  if (typeof value !== 'object' || value === null || !('kind' in value)) return false
+  const kind = value.kind
+  if (kind === 'export-model') return 'format' in value && isMeshFormat(value.format)
+  if (kind === 'open-recent') {
+    return 'jsonPath' in value && typeof value.jsonPath === 'string' && value.jsonPath.length > 0
+  }
+  return (
+    kind === 'new' ||
+    kind === 'open' ||
+    kind === 'save' ||
+    kind === 'export-scad' ||
+    kind === 'render' ||
+    kind === 'undo' ||
+    kind === 'redo'
+  )
+}
+
+export function isWindowTitle(value: unknown): value is string {
+  return (
+    typeof value === 'string' && value.length > 0 && value.length <= 180 && value.trim() === value
+  )
 }
 
 export function isProjectScadPath(path: string): boolean {

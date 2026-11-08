@@ -5,6 +5,7 @@ import { useEditor } from '../document/store'
 import type { ProjectEntry, ProjectTree } from '../../../shared/api'
 import { ComponentNameModal } from './ComponentNameModal'
 import { readEditorApi } from './editorApi'
+import { PanelHeader } from './PanelHeader'
 
 export function FileTree(): React.JSX.Element {
   const filePath = useEditor((state) => state.filePath)
@@ -62,16 +63,15 @@ export function FileTree(): React.JSX.Element {
 
   return (
     <section className="flex min-h-0 flex-1 flex-col border-t border-[#2c3240]">
-      <header className="flex items-center justify-between border-b border-[#2c3240] px-3 py-2">
-        <span className="text-[12px] tracking-wide text-[#9aa3b2] uppercase">Arquivos</span>
+      <PanelHeader title="Arquivos">
         <button
           type="button"
-          className="rounded-md px-1.5 py-0.5 text-[11px] text-[#e7e9ee] hover:bg-[#2a3040]"
+          className="ml-auto rounded-md px-1.5 py-0.5 font-normal text-[#e7e9ee] hover:bg-[#2a3040]"
           onClick={() => setNaming(true)}
         >
           Novo componente
         </button>
-      </header>
+      </PanelHeader>
       <div className="min-h-0 flex-1 overflow-auto p-2">
         <TreeButton
           label={rootName}
