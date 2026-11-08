@@ -3,7 +3,7 @@ import { validateComponentName } from '../document/files'
 import { parseProjectDocument } from '../document/parse'
 import { useEditor } from '../document/store'
 import { createEmptyDocument, referencedSvgAssets } from '../document/tree'
-import type { EditorApi, FileResult, OpenProjectResult } from '../../../shared/api'
+import type { EditorApi, FileResult, MeshFormat, OpenProjectResult } from '../../../shared/api'
 import { readEditorApi } from './editorApi'
 
 export interface ActionResult {
@@ -102,7 +102,13 @@ export async function exportCurrentScad(): Promise<void> {
   }
 }
 
-export async function exportCurrentStl(): Promise<void> {
+const MODEL_LABEL: Record<MeshFormat, string> = {
+  stl: 'STL',
+  obj: 'OBJ',
+  '3mf': '3MF'
+}
+
+export async function exportCurrentModel(format: MeshFormat): Promise<void> {
   const ready = await ensureProject()
   if (!ready.ok) {
     if (ready.message) useEditor.getState().setStatus(ready.message)
@@ -111,17 +117,19 @@ export async function exportCurrentStl(): Promise<void> {
   const api = requireApi()
   const filePath = useEditor.getState().filePath
   if (!api || !filePath) return
-  useEditor.getState().setStatus('Exportando STL...')
+  const label = MODEL_LABEL[format]
+  useEditor.getState().setStatus(`Exportando ${label}...`)
   const assets = referencedSvgAssets(useEditor.getState().document)
   try {
-    const result = await api.exportStl(
+    const result = await api.exportModel(
       filePath,
       generateProjectSources(useEditor.getState().document),
-      assets
+      assets,
+      format
     )
-    applyExport(result, 'STL exportado.')
+    applyExport(result, `${label} exportado.`)
   } catch {
-    useEditor.getState().setStatus('Não foi possível exportar o STL.')
+    useEditor.getState().setStatus(`Não foi possível exportar o ${label}.`)
   }
 }
 
@@ -157,7 +165,7 @@ function applyExport(result: FileResult, success: string): void {
     return
   }
   useEditor.getState().touchFiles()
-  useEditor.getState().setStatus(success)
+  useEditor.getState().setStatus(result.message || success)
 }
 
 function applyOpened(opened: OpenProjectResult): ActionResult {

@@ -5,6 +5,7 @@ import {
   isProjectLayout,
   parseRecentProjects,
   projectFolderName,
+  objWithProjectMaterial,
   projectLocationFromPick,
   projectPaths,
   projectStem,
@@ -27,8 +28,21 @@ describe('project layout', () => {
     expect(paths.scadPath).toBe(join('/projetos/Lamp.3dev', 'code', 'main.scad'))
     expect(paths.componentsDirectory).toBe(join('/projetos/Lamp.3dev', 'code', 'components'))
     expect(paths.stlPath).toBe(join('/projetos/Lamp.3dev', 'output', 'Lamp.stl'))
+    expect(paths.objPath).toBe(join('/projetos/Lamp.3dev', 'output', 'Lamp.obj'))
+    expect(paths.mtlPath).toBe(join('/projetos/Lamp.3dev', 'output', 'Lamp.mtl'))
+    expect(paths.threeMfPath).toBe(join('/projetos/Lamp.3dev', 'output', 'Lamp.3mf'))
     expect(paths.codeDirectory).toBe(join('/projetos/Lamp.3dev', 'code'))
     expect(paths.outputDirectory).toBe(join('/projetos/Lamp.3dev', 'output'))
+  })
+
+  it('points an obj material library at the project file', () => {
+    expect(objWithProjectMaterial('mtllib model.mtl\nv 0 0 0\n', 'Lamp.mtl')).toBe(
+      'mtllib Lamp.mtl\nv 0 0 0\n'
+    )
+    expect(objWithProjectMaterial('mtllib model.mtl\n', 'Sem título.mtl')).toBe(
+      'mtllib "Sem título.mtl"\n'
+    )
+    expect(objWithProjectMaterial('v 0 0 0\n', 'Lamp.mtl')).toBe('v 0 0 0\n')
   })
 
   it('uses the chosen folder and derives the stem from its name', () => {

@@ -273,7 +273,8 @@ interface ParsedSvg extends ParsedBase {
   kind: 'svg'
   assetId: string
   center: Vec2
-  openscadScale: number
+  moduleScale: number | null
+  openscadScale: number | null
   extrusion: Extrusion
 }
 
@@ -651,18 +652,21 @@ function parseExtrusion(
 function parseProfile(parser: Parser): ParsedProfile {
   let center: Vec2 | null = null
   if (isIdent(parser, 'translate')) {
-    const modifier = parseTranslate(parser)
-    if (modifier.position.z !== 0) {
+    center = svgPlaneTranslation(parser)
+  }
+  let moduleScale: number | null = null
+  if (center && isIdent(parser, 'scale')) {
+    const modifier = parseScale(parser)
+    if (modifier.scale.z !== 1 || modifier.scale.x !== modifier.scale.y || modifier.scale.x <= 0) {
       throw new ParseFailure(
-        'A translação do SVG fica no plano XY.',
+        'A escala do SVG precisa ser uniforme e positiva.',
         modifier.line,
         modifier.column
       )
     }
-    center = { x: modifier.position.x, y: modifier.position.y }
-    if (!isIdent(parser, 'import'))
-      fail(parser, 'translate dentro da extrusão só posiciona um SVG.')
+    moduleScale = modifier.scale.x
   }
+  if (center && isIdent(parser, 'translate')) svgPlaneTranslation(parser)
   const token = peek(parser)
   if (token.kind !== 'ident') fail(parser, `Construção não suportada: ${describe(token)}.`)
   if (token.value === 'rect') return parseRect(parser)
@@ -671,9 +675,19 @@ function parseProfile(parser: Parser): ParsedProfile {
   if (token.value === 'regular_ngon') return parseNgon(parser)
   if (token.value === 'star') return parseStar(parser)
   if (token.value === 'text') return parseText(parser)
-  if (token.value === 'import') return parseSvgImport(parser, center ?? { x: 0, y: 0 })
+  if (token.value === 'import') {
+    return parseSvgImport(parser, center ?? { x: 0, y: 0 }, moduleScale)
+  }
   if (center) fail(parser, 'translate dentro da extrusão só posiciona um SVG.')
   throw new ParseFailure(`Construção não suportada: ${token.value}.`, token.line, token.column)
+}
+
+function svgPlaneTranslation(parser: Parser): Vec2 {
+  const modifier = parseTranslate(parser)
+  if (modifier.position.z !== 0) {
+    throw new ParseFailure('A translação do SVG fica no plano XY.', modifier.line, modifier.column)
+  }
+  return { x: modifier.position.x, y: modifier.position.y }
 }
 
 function parseRect(parser: Parser): ParsedRect {
@@ -822,12 +836,12 @@ function parseText(parser: Parser): ParsedText {
   return { ...blankProfile(token), kind: 'text', text, size, font, halign, valign }
 }
 
-function parseSvgImport(parser: Parser, center: Vec2): ParsedSvg {
+function parseSvgImport(parser: Parser, center: Vec2, moduleScale: number | null): ParsedSvg {
   const token = expectIdent(parser, 'import')
   const args = parseArgs(parser)
   expectPunct(parser, ';')
   let file: string | null = null
-  let openscadScale = 1
+  let openscadScale: number | null = null
   for (const arg of args) {
     if (arg.name === null || arg.name === 'file') {
       if (file) failToken(arg.value.token, 'Arquivo repetido em import.')
@@ -837,7 +851,14 @@ function parseSvgImport(parser: Parser, center: Vec2): ParsedSvg {
   }
   const assetId = file ? ASSET_PATH.exec(file)?.[1] : undefined
   if (!file || !assetId) failToken(token, 'O SVG precisa estar na pasta 3dev-assets do projeto.')
-  return { ...blankProfile(token), kind: 'svg', assetId, center: roundVec2(center), openscadScale }
+  return {
+    ...blankProfile(token),
+    kind: 'svg',
+    assetId,
+    center: roundVec2(center),
+    moduleScale,
+    openscadScale
+  }
 }
 
 function blankProfile(token: Token): ParsedBase & { extrusion: Extrusion } {
@@ -1853,9 +1874,12 @@ function materializeProfile(
   if (!metrics) {
     throw new ParseFailure('O SVG do projeto não tem viewBox.', parsed.line, parsed.column)
   }
-  const importScale = round3(
-    Math.min(100, Math.max(0.001, importScaleFromOpenscad(parsed.openscadScale, metrics.mmPerUnit)))
-  )
+  const rawScale =
+    parsed.moduleScale ??
+    (parsed.openscadScale === null
+      ? 1
+      : importScaleFromOpenscad(parsed.openscadScale, metrics.mmPerUnit))
+  const importScale = round3(Math.min(100, Math.max(0.001, rawScale)))
   const node: SvgNode = {
     ...shared,
     kind: 'svg',

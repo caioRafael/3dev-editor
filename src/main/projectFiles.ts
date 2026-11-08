@@ -1,16 +1,18 @@
 import { mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative } from 'node:path'
-import type { ProjectEntry, ProjectTree, ScadAsset, ScadFile } from '../shared/api'
+import type { MeshFormat, ProjectEntry, ProjectTree, ScadAsset, ScadFile } from '../shared/api'
 import { isProjectScadPath } from '../shared/api'
 import {
   CODE_DIRECTORY,
   OUTPUT_DIRECTORY,
   compareNamedEntries,
   isProjectLayout,
+  objWithProjectMaterial,
   projectFolderName,
   projectPaths,
   stemFromJsonPath
 } from '../shared/project'
+import { svgSourceForOpenscad } from '../shared/svg'
 
 const MAX_TREE_DEPTH = 6
 
@@ -19,7 +21,11 @@ export async function writeAssets(directory: string, assets: ScadAsset[]): Promi
   const assetDirectory = join(directory, '3dev-assets')
   await mkdir(assetDirectory, { recursive: true })
   for (const asset of assets) {
-    await writeFile(join(assetDirectory, `${asset.id}.svg`), asset.source, 'utf8')
+    await writeFile(
+      join(assetDirectory, `${asset.id}.svg`),
+      svgSourceForOpenscad(asset.source),
+      'utf8'
+    )
   }
 }
 
@@ -91,11 +97,49 @@ async function writeScadFiles(
   if (stem !== 'main') await rm(join(codeDirectory, `${stem}.scad`), { force: true })
 }
 
+export interface ProjectModelFile {
+  name: string
+  data: Uint8Array
+}
+
+export interface WrittenProjectModel {
+  filePath: string
+  missingMaterial: boolean
+}
+
 export async function writeProjectStl(jsonPath: string, stl: Uint8Array): Promise<string> {
+  const written = await writeProjectModel(jsonPath, 'stl', [{ name: 'model.stl', data: stl }])
+  return written.filePath
+}
+
+export async function writeProjectModel(
+  jsonPath: string,
+  format: MeshFormat,
+  files: ProjectModelFile[]
+): Promise<WrittenProjectModel> {
   const paths = projectPaths(dirname(jsonPath), stemFromJsonPath(jsonPath))
   await mkdir(paths.outputDirectory, { recursive: true })
-  await writeFile(paths.stlPath, stl)
-  return paths.stlPath
+  if (format === 'stl') {
+    await writeFile(paths.stlPath, modelBytes(files, '.stl', 'STL'))
+    return { filePath: paths.stlPath, missingMaterial: false }
+  }
+  if (format === '3mf') {
+    await writeFile(paths.threeMfPath, modelBytes(files, '.3mf', '3MF'))
+    return { filePath: paths.threeMfPath, missingMaterial: false }
+  }
+  const obj = modelBytes(files, '.obj', 'OBJ')
+  const materialName = basename(paths.mtlPath)
+  const rewritten = objWithProjectMaterial(Buffer.from(obj).toString('utf8'), materialName)
+  await writeFile(paths.objPath, rewritten, 'utf8')
+  const mtl = files.find((file) => file.name.toLowerCase().endsWith('.mtl'))
+  if (mtl) await writeFile(paths.mtlPath, mtl.data)
+  return { filePath: paths.objPath, missingMaterial: !mtl }
+}
+
+function modelBytes(files: ProjectModelFile[], extension: string, label: string): Uint8Array {
+  const found = files.find((file) => file.name.toLowerCase().endsWith(extension))
+  if (!found) throw new Error(`O OpenSCAD não gerou o ${label}.`)
+  return found.data
 }
 
 export async function projectExists(jsonPath: string): Promise<boolean> {

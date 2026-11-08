@@ -69,15 +69,17 @@ $fn = 48;
 
 translate([0, 0, 0])
     difference() {
-        translate([0, 0, 0])
-            cuboid([30, 20, 10], anchor=CENTER);
-        translate([10, 0, 0])
-            cyl(h=20, d=8, anchor=CENTER);
+        color("#c4ccd4")
+            translate([0, 0, 0])
+                cuboid([30, 20, 10], anchor=CENTER);
+        color("#c4ccd4")
+            translate([10, 0, 0])
+                cyl(h=20, d=8, anchor=CENTER);
     }
 `)
   })
 
-  it('emits color, rotation, rounding and chamfer only when they change the solid', () => {
+  it('emits leaf color, and rotation, rounding and chamfer only when they change the solid', () => {
     const colored = cuboid('colored', {
       appearance: { color: '#FF8800', opacity: 1 },
       transform: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 90, z: 0 } },
@@ -89,6 +91,7 @@ translate([0, 0, 0])
     })
     const source = generateOpenscad(document({ colored, chamfered }))
     expect(source).toContain('color("#ff8800")')
+    expect(source).toContain('color("#c4ccd4")')
     expect(source).toContain('rotate([0, 90, 0])')
     expect(source).toContain('cuboid([20, 20, 20], rounding=1, anchor=CENTER);')
     expect(source).toContain('cuboid([20, 20, 20], chamfer=0.5, anchor=CENTER);')
@@ -187,8 +190,33 @@ translate([0, 0, 0])
     )
     const source = generateOpenscad(created.document)
     const assetId = Object.keys(activeModel(created.document).assets)[0]
-    expect(source).toContain(`import("3dev-assets/${assetId}.svg", scale=3.78);`)
+    expect(source).toContain(`import("3dev-assets/${assetId}.svg");`)
+    expect(source).not.toMatch(/import\([^)]*scale=/)
     expect(source).toContain('translate([-10, -5, 0])')
+  })
+
+  it('scales a resized svg around its center', () => {
+    const created = createSvgProfile(
+      createEmptyDocument(),
+      'logo.svg',
+      '<svg viewBox="0 0 20 10" xmlns="http://www.w3.org/2000/svg"></svg>'
+    )
+    if (!created.id) throw new Error('expected svg')
+    const source = generateOpenscad(patchNode(created.document, created.id, { importScale: 0.5 }))
+    expect(source).toContain('scale([0.5, 0.5, 1])')
+    expect(source).toContain('translate([-5, -2.5, 0])')
+    expect(source).not.toMatch(/import\([^)]*scale=/)
+  })
+
+  it('shifts an svg whose viewBox does not start at the origin', () => {
+    const created = createSvgProfile(
+      createEmptyDocument(),
+      'logo.svg',
+      '<svg viewBox="10 20 100 40" width="100mm" height="40mm"></svg>'
+    )
+    const source = generateOpenscad(created.document)
+    expect(source).toContain('translate([-60, -40, 0])')
+    expect(source).toContain('translate([10, 60, 0])')
   })
 
   it('keeps a root profile on linear_extrude', () => {

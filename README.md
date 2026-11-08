@@ -2,7 +2,7 @@
 
 Editor 3D paramétrico para desktop. A modelagem acontece numa vista isométrica e o aplicativo gera OpenSCAD com [BOSL2](https://github.com/BelfrySCAD/BOSL2). O código pode ser editado e volta para a cena.
 
-Um projeto é uma pasta, com o documento, o `main.scad`, componentes e o STL. Feito com Electron, React, TypeScript, Three.js e Monaco. O gerenciador de pacotes do projeto é o `pnpm`.
+Um projeto é uma pasta, com o documento, o `main.scad`, componentes e os modelos exportados (STL, OBJ e 3MF). Feito com Electron, React, TypeScript, Three.js e Monaco. O gerenciador de pacotes do projeto é o `pnpm`.
 
 ![Cubo, cilindro, esfera e um retângulo revolvido, na câmera isométrica](docs/images/05-tres-solidos.png)
 
@@ -13,7 +13,7 @@ pnpm install
 pnpm dev
 ```
 
-A prévia exata, a exportação STL, a importação de SVG e os diálogos de arquivo rodam na janela Electron. O OpenSCAD precisa estar instalado para a prévia exata e para o STL. A prévia rápida, feita com Three.js e Manifold, funciona sem ele.
+A prévia exata, a exportação de STL, OBJ e 3MF, a importação de SVG e os diálogos de arquivo rodam na janela Electron. O OpenSCAD precisa estar instalado para a prévia exata e para os modelos. A prévia rápida, feita com Three.js e Manifold, funciona sem ele.
 
 ```bash
 pnpm build:mac

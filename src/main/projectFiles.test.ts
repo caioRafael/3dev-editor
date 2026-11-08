@@ -7,6 +7,8 @@ import {
   createProjectFiles,
   readProjectTree,
   updateProjectFiles,
+  writeAssets,
+  writeProjectModel,
   writeProjectStl
 } from './projectFiles'
 
@@ -35,6 +37,21 @@ describe('project files', () => {
     expect(tree?.output).toEqual([])
   })
 
+  it('writes an svg in millimeters so OpenSCAD uses the editor size', async () => {
+    const parent = await makeTemp()
+    const id = '12345678-1234-1234-1234-123456789abc'
+    await writeAssets(parent, [
+      {
+        id,
+        source:
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40" width="100" height="40"></svg>'
+      }
+    ])
+    const written = await readFile(join(parent, '3dev-assets', `${id}.svg`), 'utf8')
+    expect(written).toContain('width="100mm"')
+    expect(written).toContain('height="40mm"')
+  })
+
   it('keeps exported meshes when the source is saved again', async () => {
     const parent = await makeTemp()
     const jsonPath = await createProjectFiles(
@@ -48,6 +65,57 @@ describe('project files', () => {
     await updateProjectFiles(jsonPath, '{"version":1}', [scad('sphere();')], [])
     expect(await readFile(join(parent, 'Lamp.3dev', 'code', 'main.scad'), 'utf8')).toBe('sphere();')
     expect([...(await readFile(stlPath))]).toEqual([1, 2, 3])
+  })
+
+  it('writes an obj with the project material name and the mtl beside it', async () => {
+    const parent = await makeTemp()
+    const jsonPath = await createProjectFiles(
+      join(parent, 'Lamp.3dev'),
+      'Lamp',
+      '{}',
+      [scad('cube();')],
+      []
+    )
+    const written = await writeProjectModel(jsonPath, 'obj', [
+      { name: 'model.obj', data: new TextEncoder().encode('mtllib model.mtl\nv 0 0 0\n') },
+      { name: 'model.mtl', data: new Uint8Array([4, 5]) }
+    ])
+    expect(written.missingMaterial).toBe(false)
+    expect(written.filePath).toBe(join(parent, 'Lamp.3dev', 'output', 'Lamp.obj'))
+    expect(await readFile(written.filePath, 'utf8')).toBe('mtllib Lamp.mtl\nv 0 0 0\n')
+    expect([...(await readFile(join(parent, 'Lamp.3dev', 'output', 'Lamp.mtl')))]).toEqual([4, 5])
+  })
+
+  it('keeps an obj that has no material file', async () => {
+    const parent = await makeTemp()
+    const jsonPath = await createProjectFiles(
+      join(parent, 'Lamp.3dev'),
+      'Lamp',
+      '{}',
+      [scad('cube();')],
+      []
+    )
+    const written = await writeProjectModel(jsonPath, 'obj', [
+      { name: 'model.obj', data: new TextEncoder().encode('v 0 0 0\n') }
+    ])
+    expect(written.missingMaterial).toBe(true)
+    expect(await readFile(written.filePath, 'utf8')).toBe('v 0 0 0\n')
+  })
+
+  it('writes a 3mf beside the other meshes', async () => {
+    const parent = await makeTemp()
+    const jsonPath = await createProjectFiles(
+      join(parent, 'Lamp.3dev'),
+      'Lamp',
+      '{}',
+      [scad('cube();')],
+      []
+    )
+    const written = await writeProjectModel(jsonPath, '3mf', [
+      { name: 'model.3mf', data: new Uint8Array([9, 8, 7]) }
+    ])
+    expect(written.filePath).toBe(join(parent, 'Lamp.3dev', 'output', 'Lamp.3mf'))
+    expect([...(await readFile(written.filePath))]).toEqual([9, 8, 7])
   })
 
   it('lists code and output without files that sit beside them', async () => {

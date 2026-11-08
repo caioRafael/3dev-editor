@@ -3,23 +3,25 @@ import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import {
   IpcChannel,
+  isMeshFormat,
   isProjectScadPath,
   isSaveProjectRequest,
   isScadAssetList,
   isScadFileList,
   type FileResult,
+  type MeshFormat,
   type OpenProjectResult,
   type SvgFile
 } from '../shared/api'
 import { projectLocationFromPick, projectStem } from '../shared/project'
-import { detectOpenscad, renderStl } from './openscad'
+import { detectOpenscad, renderMesh, renderStl } from './openscad'
 import {
   createProjectFiles,
   projectExists,
   readProjectTree,
   updateProjectFiles,
-  writeProjectScad,
-  writeProjectStl
+  writeProjectModel,
+  writeProjectScad
 } from './projectFiles'
 import { readRecentProjects, rememberProject } from './recents'
 
@@ -109,18 +111,29 @@ export function registerIpc(): void {
   )
 
   ipcMain.handle(
-    IpcChannel.exportStl,
-    async (_event, jsonPath: unknown, files: unknown, assets: unknown): Promise<FileResult> => {
+    IpcChannel.exportModel,
+    async (
+      _event,
+      jsonPath: unknown,
+      files: unknown,
+      assets: unknown,
+      format: unknown
+    ): Promise<FileResult> => {
       if (typeof jsonPath !== 'string' || !isScadFileList(files)) return failed('Fonte inválida.')
       if (!isScadAssetList(assets)) return failed('Arquivos SVG inválidos.')
+      if (!isMeshFormat(format)) return failed('Formato inválido.')
       if (!(await projectExists(jsonPath))) return failed('Salve o projeto antes de exportar.')
-      const rendered = await renderStl('main.scad', files, assets)
-      if (!rendered.ok || !rendered.stl) return failed(rendered.message)
+      const rendered = await renderMesh('main.scad', files, assets, format)
+      if (!rendered.ok || rendered.files.length === 0) return failed(rendered.message)
       try {
-        const filePath = await writeProjectStl(jsonPath, rendered.stl)
-        return { filePath, message: '', isProject: true }
+        const written = await writeProjectModel(jsonPath, format, rendered.files)
+        return {
+          filePath: written.filePath,
+          message: written.missingMaterial ? 'OBJ exportado sem material de cor.' : '',
+          isProject: true
+        }
       } catch (error) {
-        return failed(error instanceof Error ? error.message : 'Não foi possível exportar o STL.')
+        return failed(error instanceof Error ? error.message : exportError(format))
       }
     }
   )
@@ -147,6 +160,12 @@ async function readOpenedProject(filePath: string): Promise<OpenProjectResult | 
   } catch {
     return null
   }
+}
+
+function exportError(format: MeshFormat): string {
+  if (format === 'obj') return 'Não foi possível exportar o OBJ.'
+  if (format === '3mf') return 'Não foi possível exportar o 3MF.'
+  return 'Não foi possível exportar o STL.'
 }
 
 function failed(message: string): FileResult {

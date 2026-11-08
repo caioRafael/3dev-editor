@@ -16,6 +16,9 @@ export interface ProjectPaths {
   componentsDirectory: string
   outputDirectory: string
   stlPath: string
+  objPath: string
+  mtlPath: string
+  threeMfPath: string
 }
 
 export interface ProjectLocation {
@@ -54,8 +57,16 @@ export function projectPaths(directory: string, stem: string): ProjectPaths {
     scadPath: join(directory, CODE_DIRECTORY, MAIN_SCAD_FILE),
     componentsDirectory: join(directory, CODE_DIRECTORY, COMPONENTS_DIRECTORY),
     outputDirectory: join(directory, OUTPUT_DIRECTORY),
-    stlPath: join(directory, OUTPUT_DIRECTORY, `${safeStem}.stl`)
+    stlPath: join(directory, OUTPUT_DIRECTORY, `${safeStem}.stl`),
+    objPath: join(directory, OUTPUT_DIRECTORY, `${safeStem}.obj`),
+    mtlPath: join(directory, OUTPUT_DIRECTORY, `${safeStem}.mtl`),
+    threeMfPath: join(directory, OUTPUT_DIRECTORY, `${safeStem}.3mf`)
   }
+}
+
+export function objWithProjectMaterial(source: string, materialName: string): string {
+  const reference = /\s/.test(materialName) ? `"${materialName}"` : materialName
+  return source.replace(/^mtllib[^\r\n]*/m, `mtllib ${reference}`)
 }
 
 export function stemFromJsonPath(jsonPath: string): string {

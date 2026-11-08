@@ -9,6 +9,7 @@ import { app } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import {
   isProjectScadPath,
+  type MeshFormat,
   type OpenscadStatus,
   type PreviewStlResult,
   type ScadAsset,
@@ -72,26 +73,54 @@ export async function detectOpenscad(): Promise<OpenscadStatus> {
   }
 }
 
+export interface RenderedFile {
+  name: string
+  data: Uint8Array
+}
+
+export interface RenderMeshResult {
+  ok: boolean
+  message: string
+  files: RenderedFile[]
+}
+
 export async function renderStl(
   entry: string,
   files: ScadFile[],
   assets: ScadAsset[] = []
 ): Promise<PreviewStlResult> {
+  const rendered = await renderMesh(entry, files, assets, 'stl')
+  if (!rendered.ok) return { ok: false, message: rendered.message }
+  const stl = rendered.files.find((file) => file.name.endsWith('.stl'))?.data
+  if (!stl) return { ok: false, message: 'O OpenSCAD não gerou o STL.' }
+  return { ok: true, message: '', stl }
+}
+
+export async function renderMesh(
+  entry: string,
+  files: ScadFile[],
+  assets: ScadAsset[] = [],
+  format: MeshFormat
+): Promise<RenderMeshResult> {
   const status = cachedCommand
     ? { available: true, command: cachedCommand, message: cachedCommand }
     : await detectOpenscad()
-  if (!status.available || !status.command) return { ok: false, message: status.message }
+  if (!status.available || !status.command) {
+    return { ok: false, message: status.message, files: [] }
+  }
   if (!isProjectScadPath(entry) || !files.some((file) => file.path === entry)) {
-    return { ok: false, message: 'Arquivo OpenSCAD inválido.' }
+    return { ok: false, message: 'Arquivo OpenSCAD inválido.', files: [] }
   }
 
   const hash = hashSource(entry, files, assets)
-  const cached = previewCache.get(hash)
-  if (cached) return { ok: true, message: '', stl: cached }
+  if (format === 'stl') {
+    const cached = previewCache.get(hash)
+    if (cached) return { ok: true, message: '', files: [{ name: 'model.stl', data: cached }] }
+  }
 
   const directory = await mkdtemp(join(tmpdir(), '3dev-'))
   const scadPath = join(directory, entry)
-  const stlPath = join(directory, 'model.stl')
+  const outputName = format === '3mf' ? 'model.3mf' : `model.${format}`
   try {
     for (const file of files) {
       if (!isProjectScadPath(file.path)) continue
@@ -100,24 +129,45 @@ export async function renderStl(
       await writeFile(target, file.source, 'utf8')
     }
     await writeAssets(directory, assets)
-    await execFileAsync(status.command, ['-o', stlPath, scadPath], {
+    const args = ['-o', join(directory, outputName)]
+    if (format === '3mf') args.push('-O', 'export-3mf/material-type=color')
+    if (format !== 'stl') args.push('--backend=Manifold')
+    args.push(scadPath)
+    await execFileAsync(status.command, args, {
       env: { ...process.env, OPENSCADPATH: openscadLibraryPath() },
       timeout: 120000,
       maxBuffer: 12 * 1024 * 1024
     })
-    const stl = new Uint8Array(await readFile(stlPath))
-    previewCache.set(hash, stl)
-    if (previewCache.size > 8) {
-      const oldest = previewCache.keys().next().value
-      if (oldest) previewCache.delete(oldest)
+    const rendered = await readRenderedFiles(directory, format)
+    if (format === 'stl') {
+      const stl = rendered.find((file) => file.name.endsWith('.stl'))?.data
+      if (stl) {
+        previewCache.set(hash, stl)
+        if (previewCache.size > 8) {
+          const oldest = previewCache.keys().next().value
+          if (oldest) previewCache.delete(oldest)
+        }
+      }
     }
-    return { ok: true, message: '', stl }
+    return { ok: true, message: '', files: rendered }
   } catch (error) {
     cachedCommand = null
-    return { ok: false, message: errorText(error) }
+    return { ok: false, message: errorText(error), files: [] }
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+}
+
+async function readRenderedFiles(directory: string, format: MeshFormat): Promise<RenderedFile[]> {
+  if (format === 'obj') {
+    const obj = new Uint8Array(await readFile(join(directory, 'model.obj')))
+    const rendered: RenderedFile[] = [{ name: 'model.obj', data: obj }]
+    const material = await readFile(join(directory, 'model.mtl')).catch(() => null)
+    if (material) rendered.push({ name: 'model.mtl', data: new Uint8Array(material) })
+    return rendered
+  }
+  const name = format === 'stl' ? 'model.stl' : 'model.3mf'
+  return [{ name, data: new Uint8Array(await readFile(join(directory, name))) }]
 }
 
 function hashSource(entry: string, files: ScadFile[], assets: ScadAsset[]): string {

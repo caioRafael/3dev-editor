@@ -2,7 +2,7 @@
 
 O 3dev editor é um aplicativo de desktop para modelar sólidos em milímetros e gerar OpenSCAD com a biblioteca [BOSL2](https://github.com/BelfrySCAD/BOSL2). A cena é editada numa vista 3D; o código OpenSCAD é gerado ao mesmo tempo e pode ser editado de volta para o modelo.
 
-Um projeto é uma pasta. Dentro dela cabem o documento, o `main.scad`, componentes e o STL exportado. A cena ativa é um desses arquivos: o principal ou um componente.
+Um projeto é uma pasta. Dentro dela cabem o documento, o `main.scad`, componentes e os modelos exportados (STL, OBJ e 3MF). A cena ativa é um desses arquivos: o principal ou um componente.
 
 As imagens abaixo foram capturadas com o aplicativo em execução (`pnpm dev`), na câmera padrão do viewport: eixo Z para cima e enquadramento isométrico.
 
@@ -39,7 +39,7 @@ A janela tem a barra de menu, a coluna esquerda, a barra de ferramentas, o viewp
 
 | Região | Função |
 | --- | --- |
-| Barra superior | Novo, Abrir, Salvar, Exportar SCAD, Renderizar e Exportar STL. À direita, a pasta do projeto ou “Sem arquivo”. |
+| Barra superior | Menus Arquivo e Exportar, e o botão Renderizar. Arquivo reúne Novo, Abrir e Salvar. Exportar separa o código OpenSCAD dos modelos STL, OBJ e 3MF. À direita, a pasta do projeto ou “Sem arquivo”. |
 | Modelo | Sólidos raiz do arquivo ativo. Filhos de um booleano aparecem indentados. |
 | Arquivos | Árvore da pasta, com ícone de pasta ou de arquivo: JSON, `code/main.scad`, `components` e `output`. As pastas abrem e fecham. **Novo componente** cria o arquivo na hora. |
 | Ferramentas | Ícones de selecionar, mover, girar e escalar; menus de formas, componentes, operações 3D e operações 2D. |
@@ -182,7 +182,7 @@ include <BOSL2/std.scad>
 $fn = 48;
 ```
 
-Se a cena usa componentes, entram linhas `use <...>`. Só as raízes visíveis são emitidas. A ordem dos modificadores é cor, translação e rotação. Rotação zero é omitida. Cor padrão `#c4ccd4` e opacidade 1 também são omitidas.
+Se a cena usa componentes, entram linhas `use <...>`. Só as raízes visíveis são emitidas. A ordem dos modificadores é cor, translação e rotação. Rotação zero é omitida. Cada sólido folha recebe `color()`, inclusive no cinza `#c4ccd4`. Um grupo com essa cor e opacidade 1 não embrulha os filhos, para a cor de cada um permanecer.
 
 | Nó | Chamada |
 | --- | --- |
@@ -218,7 +218,7 @@ O painel de código aplica o texto de volta cerca de 320 ms depois da última di
 3. O STL volta para o viewport e substitui a malha rápida por uma malha cinza.
 4. O resultado fica em cache por hash do fonte (até 8 entradas). O tempo limite é 120 segundos.
 
-O OpenSCAD é procurado em `OPENSCAD_BIN`, no aplicativo do macOS, no Homebrew, em `/usr/local/bin`, em `/usr/bin` e, por último, no `PATH`. Sem o binário, a prévia rápida continua. **Renderizar** e **Prévia exata** disparam esse caminho. **Exportar STL** usa o mesmo render e grava `output/<nome>.stl` no projeto.
+O OpenSCAD é procurado em `OPENSCAD_BIN`, no aplicativo do macOS, no Homebrew, em `/usr/local/bin`, em `/usr/bin` e, por último, no `PATH`. Sem o binário, a prévia rápida continua. **Renderizar** e **Prévia exata** disparam esse caminho. **Exportar** usa o mesmo render: o STL grava `output/<nome>.stl`, sem cor. OBJ e 3MF usam o backend Manifold. O 3MF grava `output/<nome>.3mf` com a cor de cada sólido no grupo de cores que o fatiador lê. O OBJ grava `output/<nome>.obj` e, se o OpenSCAD produzir o material, também `output/<nome>.mtl`. O OpenSCAD 2026 leva a cor no 3MF e exporta o OBJ sem material. Um SVG é gravado em milímetros e o redimensionamento entra num `scale()`, porque o `scale` do `import` é ignorado.
 
 ## Arquivos
 
@@ -233,6 +233,9 @@ Nome/
       <id>.svg
   output/
     Nome.stl
+    Nome.obj
+    Nome.mtl
+    Nome.3mf
 ```
 
 | Ação | Resultado |
@@ -240,8 +243,10 @@ Nome/
 | Salvar | Sem projeto, pede a pasta e cria o JSON, `code/` e `output/`. Com projeto aberto, regrava o JSON, o `main.scad`, os componentes e os SVGs. |
 | Novo componente | Grava `code/components/<Nome>.scad` assim que o nome é confirmado. Sem projeto, cria a pasta antes. |
 | Abrir | Lê um `.3dev.json` e valida a versão 2. Se `code/` e `output/` estiverem ao lado, a árvore lista o projeto. O histórico é zerado. |
-| Exportar SCAD | Grava o fonte em `code/`. Sem projeto, salva antes. |
-| Exportar STL | Renderiza com OpenSCAD e grava `output/<nome>.stl`, substituindo o arquivo anterior. Sem projeto, salva antes. |
+| Exportar OpenSCAD | Grava o fonte em `code/`. Sem projeto, salva antes. |
+| Exportar STL | Renderiza com OpenSCAD e grava `output/<nome>.stl`, sem cor, substituindo o arquivo anterior. Sem projeto, salva antes. |
+| Exportar OBJ | Renderiza com o backend Manifold e grava `output/<nome>.obj`. Se houver material, grava `output/<nome>.mtl` ao lado. Sem material, a barra de status avisa. Sem projeto, salva antes. |
+| Exportar 3MF | Renderiza com o backend Manifold e grava `output/<nome>.3mf`, com a cor de cada sólido. Sem projeto, salva antes. |
 | Novo | Reabre o modal. Criar projeto substitui a cena por um documento vazio nessa pasta. |
 
 A lista de recentes fica neste computador, com no máximo 8 projetos. Criar ou abrir um projeto coloca o item no topo. Um atalho cujo arquivo sumiu sai da lista.
@@ -269,4 +274,4 @@ No renderer:
 | `ui/` | Barras, árvore, arquivos, propriedades e o editor Monaco. |
 | `editor/` | Configuração do Monaco para OpenSCAD. |
 
-O processo principal não interpreta a cena. Ele detecta o OpenSCAD, renderiza STL e lê ou grava a pasta do projeto. A cena, o desfazer e a geração de código acontecem no renderer.
+O processo principal não interpreta a cena. Ele detecta o OpenSCAD, renderiza STL, OBJ e 3MF, e lê ou grava a pasta do projeto. A cena, o desfazer e a geração de código acontecem no renderer.

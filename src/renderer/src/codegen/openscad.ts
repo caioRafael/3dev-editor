@@ -8,7 +8,7 @@ import {
   scadRelativePath
 } from '../document/files'
 import { getRoots } from '../document/tree'
-import { openscadSvgScale } from '../preview/svgMetrics'
+import { svgImportCorrection } from '../preview/svgMetrics'
 import {
   type Appearance,
   type BooleanNode,
@@ -120,7 +120,7 @@ function emitFeature(document: ProjectDocument, node: FeatureNode, fileName: str
   const scaled = emitScale(shape, isComponentNode(node) ? node.scale : null)
   const rotated = emitRotate(scaled, node.transform.rotation)
   const translated = emitTranslate(rotated, node.transform.position)
-  return emitColor(translated, node.appearance)
+  return emitColor(translated, node.appearance, isGroupNode(node))
 }
 
 function emitShape(document: ProjectDocument, node: FeatureNode, fileName: string): string {
@@ -148,7 +148,7 @@ function emitFlatFeature(document: ProjectDocument, node: FeatureNode, fileName:
   if (!shape) return ''
   const rotated = emitRotate(shape, node.transform.rotation)
   const translated = emitTranslate(rotated, node.transform.position)
-  return emitColor(translated, node.appearance)
+  return emitColor(translated, node.appearance, isGroupNode(node))
 }
 
 function emitInactiveGroup(document: ProjectDocument, node: FeatureNode, fileName: string): string {
@@ -263,10 +263,20 @@ function emitText(node: TextNode): string {
 }
 
 function emitSvg(node: SvgNode, fileName: string): string {
-  const scale = openscadSvgScale(node.mmPerUnit, node.importScale)
-  const imported = `import(${emitString(`${assetRelativePrefix(fileName)}${node.assetId}.svg`)}, scale=${formatNumber(scale)});`
-  const translated = `translate(${emitVec({ x: node.center.x, y: node.center.y, z: 0 })})\n${indent(imported, 4)}`
-  return translated
+  const file = `${assetRelativePrefix(fileName)}${node.assetId}.svg`
+  let body = `import(${emitString(file)});`
+  const correction = svgImportCorrection(node.viewMin, node.mmPerUnit)
+  if (!isNearlyZero(correction)) {
+    body = `translate(${emitVec({ x: correction.x, y: correction.y, z: 0 })})\n${indent(body, 4)}`
+  }
+  if (Math.abs(node.importScale - 1) > 0.0005) {
+    body = `scale(${emitVec({ x: node.importScale, y: node.importScale, z: 1 })})\n${indent(body, 4)}`
+  }
+  return `translate(${emitVec({ x: node.center.x, y: node.center.y, z: 0 })})\n${indent(body, 4)}`
+}
+
+function isNearlyZero(value: Vec2): boolean {
+  return Math.abs(value.x) < 0.0005 && Math.abs(value.y) < 0.0005
 }
 
 function emitCuboid(node: CuboidNode): string {
@@ -403,10 +413,10 @@ function emitRotate(inner: string, rotation: Vec3): string {
   return `rotate(${emitVec(rotation)})\n${indent(inner, 4)}`
 }
 
-function emitColor(inner: string, appearance: Appearance): string {
+function emitColor(inner: string, appearance: Appearance, skipDefault: boolean): string {
   const custom = appearance.color.toLowerCase() !== DEFAULT_COLOR
   const translucent = appearance.opacity < 0.999
-  if (!custom && !translucent) return inner
+  if (skipDefault && !custom && !translucent) return inner
   const alpha = translucent ? `, ${formatNumber(appearance.opacity)}` : ''
   return `color("${appearance.color.toLowerCase()}"${alpha})\n${indent(inner, 4)}`
 }

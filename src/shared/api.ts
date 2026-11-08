@@ -4,7 +4,7 @@ export const IpcChannel = {
   saveProject: 'project:save',
   openProject: 'project:open',
   exportScad: 'export:scad',
-  exportStl: 'export:stl',
+  exportModel: 'export:model',
   pickSvg: 'asset:pick-svg',
   listProjectTree: 'project:tree',
   listRecentProjects: 'project:recent',
@@ -46,6 +46,8 @@ export interface OpenProjectResult {
   isProject: boolean
 }
 
+export type MeshFormat = 'stl' | 'obj' | '3mf'
+
 export interface FileResult {
   filePath: string | null
   message: string
@@ -85,7 +87,12 @@ export interface EditorApi {
   saveProject: (request: SaveProjectRequest) => Promise<FileResult>
   openProject: () => Promise<OpenProjectResult | null>
   exportScad: (jsonPath: string, files: ScadFile[], assets: ScadAsset[]) => Promise<FileResult>
-  exportStl: (jsonPath: string, files: ScadFile[], assets: ScadAsset[]) => Promise<FileResult>
+  exportModel: (
+    jsonPath: string,
+    files: ScadFile[],
+    assets: ScadAsset[],
+    format: MeshFormat
+  ) => Promise<FileResult>
   pickSvg: () => Promise<SvgFile | null>
   listProjectTree: (jsonPath: string) => Promise<ProjectTree | null>
   listRecentProjects: () => Promise<RecentProject[]>
@@ -98,6 +105,10 @@ export function isScadAssetList(value: unknown): value is ScadAsset[] {
 
 export function isScadFileList(value: unknown): value is ScadFile[] {
   return Array.isArray(value) && value.length > 0 && value.every((item) => isScadFile(item))
+}
+
+export function isMeshFormat(value: unknown): value is MeshFormat {
+  return value === 'stl' || value === 'obj' || value === '3mf'
 }
 
 export function isProjectScadPath(path: string): boolean {

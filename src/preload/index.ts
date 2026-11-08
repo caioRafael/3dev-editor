@@ -10,8 +10,8 @@ const api: EditorApi = {
   openProject: () => ipcRenderer.invoke(IpcChannel.openProject),
   exportScad: (jsonPath, files, assets) =>
     ipcRenderer.invoke(IpcChannel.exportScad, jsonPath, files, assets),
-  exportStl: (jsonPath, files, assets) =>
-    ipcRenderer.invoke(IpcChannel.exportStl, jsonPath, files, assets),
+  exportModel: (jsonPath, files, assets, format) =>
+    ipcRenderer.invoke(IpcChannel.exportModel, jsonPath, files, assets, format),
   pickSvg: () => ipcRenderer.invoke(IpcChannel.pickSvg),
   listProjectTree: (jsonPath) => ipcRenderer.invoke(IpcChannel.listProjectTree, jsonPath),
   listRecentProjects: () => ipcRenderer.invoke(IpcChannel.listRecentProjects),
